@@ -1,3 +1,4 @@
 {
-    "postStartCommand": "node server.js"
+    "postStartCommand": "node server.js",
+    "forwardPorts": [3000, 3001]
 }
