@@ -1,6 +1,7 @@
 const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const { createProject } = require('./src/project-generator/create');
 
 const server = http.createServer((req, res) => {
     if (req.url === '/') {
@@ -8,6 +9,30 @@ const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'text/plain' });
             res.end('Hello World');
         }
+    } else if (req.method === 'POST' && req.url === '/create_project') {
+        let body = '';
+
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+
+        req.on('end', async () => {
+            try {
+                const projectConfig = JSON.parse(body);
+                await createProject(projectConfig);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ 
+                    message: 'Project created successfully',
+                    projectPath: `codebases_projects/${projectConfig.title.toLowerCase().replace(/\s+/g, '-')}`
+                }));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ 
+                    error: 'Failed to create project',
+                    details: error.message 
+                }));
+            }
+        });
     } else if(req.method === 'POST' && req.url === '/execute') {
         let body = '';
 
