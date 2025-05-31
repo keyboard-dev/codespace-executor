@@ -2,6 +2,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const { createProject } = require('./src/project-generator/create');
+const { retrievePackageJson, retrieveEnvironmentVariableKeys } = require('./src/retrieve_resources');
 
 const server = http.createServer((req, res) => {
     if (req.url === '/') {
@@ -33,6 +34,32 @@ const server = http.createServer((req, res) => {
                 }));
             }
         });
+    } else if(req.method === 'POST' && req.url === '/fetch_key_name_and_resources') {
+        let body = '';
+
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+        
+        req.on('end', async () => {
+            try {
+                const payload = JSON.parse(body);
+                const packageJson = await retrievePackageJson(payload);
+                const environmentVariableKeys = await retrieveEnvironmentVariableKeys(payload);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ 
+                    packageJson,
+                    environmentVariableKeys
+                }));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ 
+                    error: 'Failed to retrieve package.json and environment variable keys',
+                    details: error.message 
+                }));
+            }
+        });
+    
     } else if(req.method === 'POST' && req.url === '/execute') {
         let body = '';
 
