@@ -105,21 +105,33 @@ function executeCodeWithAsyncSupport(payload, res) {
                              codeToExecute.includes('Promise') ||
                              codeToExecute.includes('.then(') ||
                              codeToExecute.includes('setTimeout') ||
-                             codeToExecute.includes('setInterval');
+                             codeToExecute.includes('setInterval') ||
+                             codeToExecute.includes('https.request') ||
+                             codeToExecute.includes('fetch(');
     
     if (needsAsyncWrapper) {
+        // Configurable async timeout - default 5 seconds for API calls
+        const asyncTimeout = payload.asyncTimeout || 5000;
+        
         // Wrap in async IIFE and add proper exit handling
         codeToExecute = `
 (async () => {
     try {
         ${payload.code}
         
-        // Wait a bit for any pending async operations
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Wait for any pending async operations (configurable timeout)
+        await new Promise(resolve => setTimeout(resolve, ${asyncTimeout}));
         
     } catch (error) {
         console.error('❌ Execution error:', error.message);
-        console.error('Stack:', error.stack);
+        console.error('❌ Error type:', error.constructor.name);
+        console.error('❌ Stack trace:', error.stack);
+        
+        // Try to log additional error details
+        if (error.code) console.error('❌ Error code:', error.code);
+        if (error.errno) console.error('❌ Error number:', error.errno);
+        if (error.syscall) console.error('❌ System call:', error.syscall);
+        
         process.exit(1);
     }
 })().then(() => {
@@ -127,21 +139,28 @@ function executeCodeWithAsyncSupport(payload, res) {
     setTimeout(() => {
         console.log('\\n--- 🏁 Execution completed ---');
         process.exit(0);
-    }, 50);
+    }, 200);
 }).catch(error => {
     console.error('❌ Promise rejection:', error.message);
+    console.error('❌ Promise rejection stack:', error.stack);
     process.exit(1);
 });
 
-// Handle unhandled promise rejections
+// Handle unhandled promise rejections with more details
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Promise Rejection:', reason);
+    console.error('❌ Unhandled Promise Rejection at:', promise);
+    console.error('❌ Reason:', reason);
+    if (reason && reason.stack) {
+        console.error('❌ Stack:', reason.stack);
+    }
     process.exit(1);
 });
 
-// Handle uncaught exceptions
+// Handle uncaught exceptions with more details
 process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error.message);
+    console.error('❌ Exception stack:', error.stack);
+    console.error('❌ Exception type:', error.constructor.name);
     process.exit(1);
 });
 `;
@@ -193,7 +212,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 error: 'Execution timeout',
                 timeout: timeout,
                 stdout: stdout,
-                stderr: stderr
+                stderr: stderr,
+                message: `Process timed out after ${timeout}ms. Consider increasing timeout or optimizing async operations.`
             }));
         }
     }, timeout);
@@ -218,7 +238,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 data: {
                     stdout, 
                     stderr, 
-                    code
+                    code,
+                    executionTime: Date.now() // Add execution timestamp
                 }
             }));
         }
@@ -235,6 +256,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 success: false,
                 error: {
                     message: error.message,
+                    type: error.constructor.name,
+                    code: error.code,
                     stdout: stdout,
                     stderr: stderr
                 }
@@ -256,4 +279,8 @@ server.listen(PORT, () => {
     console.log(`   POST /create_project             - Create new project`);
     console.log(`   POST /fetch_key_name_and_resources - Get package.json and env vars`);
     console.log(`   POST /execute                    - Execute code or commands`);
+    console.log(`🔧 Async improvements:`);
+    console.log(`   - Configurable async timeout (default: 5000ms)`);
+    console.log(`   - Better error reporting and stack traces`);
+    console.log(`   - Enhanced HTTPS/API call detection`);
 });
