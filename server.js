@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { createProject } = require('./src/project-generator/create');
-const { retrievePackageJson, retrieveEnvironmentVariableKeys } = require('./src/retrieve_resources');
+const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources } = require('./src/retrieve_resources');
 
 const server = http.createServer((req, res) => {
     if (req.url === '/') {
@@ -47,6 +47,7 @@ const server = http.createServer((req, res) => {
                 const payload = JSON.parse(body);
                 const packageJson = await retrievePackageJson(payload);
                 const environmentVariableKeys = await retrieveEnvironmentVariableKeys(payload);
+                const docResources = await retrieveDocResources(payload);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
                     "packageJson": packageJson,

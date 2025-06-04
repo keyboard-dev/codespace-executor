@@ -1,4 +1,4 @@
 {
-    "postStartCommand": "node server.js",
+    "postStartCommand": "npm run start",
     "forwardPorts": [3000, 3001]
 }

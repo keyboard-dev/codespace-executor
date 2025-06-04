@@ -4,7 +4,9 @@
   "description": "A simple Node.js server that responds with 'Hello World'.",
   "main": "src/server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "npm install && node server.js",
+    "dev": "npm install && node server.js",
+    "serve": "node server.js"
   },
   "dependencies": {
     "dotenv": "^16.5.0",
