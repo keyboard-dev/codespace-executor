@@ -24,7 +24,20 @@ async function retrieveEnvironmentVariableKeys(config) {
     return filteredKeys;
 }
 
+async function retrieveDocResources(config) {
+    let keys = Object.keys(process.env);
+    // Filter keys to only include those that start with "KB_DOCS"
+    let filteredKeys = keys.filter(key => key.startsWith('KB_DOCS'));
+    // Return the complete environment variable objects instead of just keys
+    let filteredEnvVars = {};
+    filteredKeys.forEach(key => {
+        filteredEnvVars[key] = process.env[key];
+    });
+    return filteredEnvVars;
+}
+
 module.exports = {
     retrievePackageJson,
-    retrieveEnvironmentVariableKeys
+    retrieveEnvironmentVariableKeys,
+    retrieveDocResources
 };

@@ -48,8 +48,9 @@ const server = http.createServer((req, res) => {
                 const environmentVariableKeys = await retrieveEnvironmentVariableKeys(payload);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
-                    packageJson,
-                    environmentVariableKeys
+                    "packageJson": packageJson,
+                    "environmentVariableKeys": environmentVariableKeys,
+                    "docResources": docResources,
                 }));
             } catch (error) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
