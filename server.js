@@ -3,7 +3,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { createProject } = require('./src/project-generator/create');
-const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources } = require('./src/retrieve_resources');
+const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
 
 const server = http.createServer((req, res) => {
     if (req.url === '/') {
@@ -45,9 +45,9 @@ const server = http.createServer((req, res) => {
         req.on('end', async () => {
             try {
                 const payload = JSON.parse(body);
-                const packageJson = await retrievePackageJson(payload);
-                const environmentVariableKeys = await retrieveEnvironmentVariableKeys(payload);
-                const docResources = await retrieveDocResources(payload);
+                const packageJson = await retrievePackageJson();
+                const environmentVariableKeys = await retrieveEnvironmentVariableKeys();
+                const docResources = await retrieveDocResources();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
                     "packageJson": packageJson,
@@ -70,10 +70,16 @@ const server = http.createServer((req, res) => {
             body += chunk.toString();
         });
 
-        req.on('end', () => {
+        req.on('end', async() => {
             try {
                 const payload = JSON.parse(body);
-                
+
+                const areResourcesValid = await checkIfResourcesAreValid(payload);
+                if (!areResourcesValid) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'Resources are not valid, make sure you have the correct environment variables and doc resources before trying to execute' }));
+                }
+
                 if (payload.code) {
                     console.log(payload.code);
                     // Enhanced code execution with async support
@@ -88,7 +94,7 @@ const server = http.createServer((req, res) => {
                 }
             } catch (err) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                res.end(JSON.stringify({ error: 'Looks there was an error did you review or look at docs before executing this request?' }));
             }
         });
     } else {
