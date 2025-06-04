@@ -20,16 +20,12 @@ async function retrievePackageJson() {
 async function checkIfResourcesAreValid(itemsToCheck) {
     let {environmentVariablesNames, docResources} = itemsToCheck;
     let existingServerEnvVars = await retrieveEnvironmentVariableKeys();
-    let existingDocResources = await retrieveDocResources();
-    
     // Compare environmentVariableKeys with existingServerEnvVars
-    const areEnvironmentVariablesMatching = compareArrays(environmentVariablesNames, existingServerEnvVars);
-    const areDocResourcesMatching = compareArrays(docResources, existingDocResources);
-    
+    const areEnvironmentVariablesMatching = compareArrays(environmentVariablesNames, existingServerEnvVars);    
     console.log('Expected environment variables:', environmentVariablesNames);
     console.log('Existing environment variables:', existingServerEnvVars);
     console.log('Environment variables match:', areEnvironmentVariablesMatching);
-    return areEnvironmentVariablesMatching && areDocResourcesMatching;
+    return areEnvironmentVariablesMatching
 }
 
 async function retrieveEnvironmentVariableKeys() {
