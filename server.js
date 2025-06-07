@@ -2,7 +2,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { createProject } = require('./src/project-generator/create');
+// const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
 
 // Ollama integration
@@ -103,7 +103,6 @@ const server = http.createServer((req, res) => {
         req.on('end', async () => {
             try {
                 const projectConfig = JSON.parse(body);
-                await createProject(projectConfig);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
                     message: 'Project created successfully',
