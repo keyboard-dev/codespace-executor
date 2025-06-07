@@ -4,13 +4,15 @@
   "description": "A simple Node.js server that responds with 'Hello World'.",
   "main": "src/server.js",
   "scripts": {
-    "start": "npm install && node server.js",
-    "dev": "npm install && node server.js",
-    "serve": "node server.js"
+    "start": "npm install && node setup-ollama.js && node server.js",
+    "dev": "npm install && node setup-ollama.js && node server.js",
+    "serve": "node server.js",
+    "setup-ollama": "node setup-ollama.js"
   },
   "dependencies": {
     "dotenv": "^16.5.0",
-    "express": "^4.17.1"
+    "express": "^4.17.1",
+    "ollama": "^0.5.0"
   },
   "author": "",
   "license": "ISC"

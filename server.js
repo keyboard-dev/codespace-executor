@@ -5,12 +5,94 @@ const path = require('path');
 const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
 
+// Ollama integration
+let ollamaClient = null;
+try {
+    const { Ollama } = require('ollama');
+    ollamaClient = new Ollama({ host: 'http://localhost:11434' });
+} catch (error) {
+    console.log('⚠️  Ollama package not available, Ollama endpoints will be disabled');
+}
+
 const server = http.createServer((req, res) => {
     if (req.url === '/') {
         if (req.method === 'GET') {
             res.writeHead(200, { 'Content-Type': 'text/plain' });
             res.end('Hello World');
         }
+    } else if (req.method === 'POST' && req.url === '/ollama/chat') {
+        // Ollama chat endpoint
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+        req.on('end', async () => {
+            try {
+                if (!ollamaClient) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'Ollama service not available' }));
+                }
+
+                const { message, model = 'gemma3:1b', stream = false } = JSON.parse(body);
+                
+                if (!message) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'Message is required' }));
+                }
+
+                const response = await ollamaClient.chat({
+                    model: model,
+                    messages: [{ role: 'user', content: message }],
+                    stream: false
+                });
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: true,
+                    response: response.message.content,
+                    model: model
+                }));
+
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: 'Failed to chat with Ollama',
+                    details: error.message
+                }));
+            }
+        });
+    } else if (req.method === 'GET' && req.url === '/ollama/status') {
+        // Ollama status endpoint
+        (async () => {
+            try {
+                if (!ollamaClient) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ 
+                        ollamaAvailable: false,
+                        error: 'Ollama client not initialized'
+                    }));
+                }
+
+                // Try to get list of models to check if service is running
+                const models = await ollamaClient.list();
+                const phi3Available = models.models.some(model => model.name.includes('phi3'));
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    ollamaAvailable: true,
+                    phi3Available: phi3Available,
+                    models: models.models.map(m => m.name),
+                    apiUrl: 'http://localhost:11434'
+                }));
+
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    ollamaAvailable: false,
+                    error: error.message
+                }));
+            }
+        })();
     } else if (req.method === 'POST' && req.url === '/create_project') {
         let body = '';
 
@@ -287,6 +369,11 @@ server.listen(PORT, () => {
     console.log(`   POST /create_project             - Create new project`);
     console.log(`   POST /fetch_key_name_and_resources - Get package.json and env vars`);
     console.log(`   POST /execute                    - Execute code or commands`);
+    console.log(`   POST /ollama/chat                - Chat with Phi3 model via Ollama`);
+    console.log(`   GET  /ollama/status              - Check Ollama and Phi3 status`);
+    console.log(`🤖 Ollama integration:`);
+    console.log(`   - Microsoft Phi3 model ready for chat`);
+    console.log(`   - Ollama API: http://localhost:11434`);
     console.log(`🔧 Async improvements:`);
     console.log(`   - Configurable async timeout (default: 5000ms)`);
     console.log(`   - Better error reporting and stack traces`);
