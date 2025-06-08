@@ -5,13 +5,17 @@ const path = require('path');
 // const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
 
-// Ollama integration
+// Local LLM integration
+const LocalLLM = require('./src/local_llm/local');
+const localLLM = new LocalLLM();
+
+// Legacy Ollama integration (keeping for backward compatibility)
 let ollamaClient = null;
 try {
     const { Ollama } = require('ollama');
     ollamaClient = new Ollama({ host: 'http://localhost:11434' });
 } catch (error) {
-    console.log('⚠️  Ollama package not available, Ollama endpoints will be disabled');
+    console.log('⚠️  Ollama package not available, using LocalLLM module instead');
 }
 
 const server = http.createServer((req, res) => {
@@ -20,8 +24,89 @@ const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'text/plain' });
             res.end('Hello World');
         }
+    } else if (req.method === 'POST' && req.url === '/local-llm/initialize') {
+        // Initialize Local LLM (start Ollama and ensure model is ready)
+        (async () => {
+            try {
+                console.log('🚀 Initializing Local LLM via API request...');
+                const success = await localLLM.initialize();
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: success,
+                    message: success ? 'Local LLM initialized successfully' : 'Failed to initialize Local LLM',
+                    status: await localLLM.getStatus()
+                }));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: false,
+                    error: error.message
+                }));
+            }
+        })();
+    } else if (req.method === 'GET' && req.url === '/local-llm/status') {
+        // Get Local LLM status
+        (async () => {
+            try {
+                const status = await localLLM.getStatus();
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(status));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: error.message
+                }));
+            }
+        })();
+    } else if (req.method === 'POST' && req.url === '/local-llm/chat') {
+        // Chat with Local LLM
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+        req.on('end', async () => {
+            try {
+                const { message, temperature, model } = JSON.parse(body);
+                
+                if (!message) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: 'Message is required' }));
+                }
+
+                const response = await localLLM.chat(message, { temperature, model });
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(response));
+
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: false,
+                    error: error.message
+                }));
+            }
+        });
+    } else if (req.method === 'POST' && req.url === '/local-llm/stop') {
+        // Stop Local LLM service
+        (async () => {
+            try {
+                const success = await localLLM.stop();
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: success,
+                    message: success ? 'Local LLM stopped successfully' : 'Failed to stop Local LLM'
+                }));
+            } catch (error) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: false,
+                    error: error.message
+                }));
+            }
+        })();
     } else if (req.method === 'POST' && req.url === '/ollama/chat') {
-        // Ollama chat endpoint
+        // Legacy Ollama chat endpoint (updated to use gemma3:1b by default)
         let body = '';
         req.on('data', chunk => {
             body += chunk.toString();
@@ -62,7 +147,7 @@ const server = http.createServer((req, res) => {
             }
         });
     } else if (req.method === 'GET' && req.url === '/ollama/status') {
-        // Ollama status endpoint
+        // Legacy Ollama status endpoint (updated for gemma3:1b)
         (async () => {
             try {
                 if (!ollamaClient) {
@@ -75,12 +160,12 @@ const server = http.createServer((req, res) => {
 
                 // Try to get list of models to check if service is running
                 const models = await ollamaClient.list();
-                const phi3Available = models.models.some(model => model.name.includes('phi3'));
+                const gemmaAvailable = models.models.some(model => model.name.includes('gemma3'));
 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     ollamaAvailable: true,
-                    phi3Available: phi3Available,
+                    gemmaAvailable: gemmaAvailable,
                     models: models.models.map(m => m.name),
                     apiUrl: 'http://localhost:11434'
                 }));
@@ -368,10 +453,15 @@ server.listen(PORT, () => {
     console.log(`   POST /create_project             - Create new project`);
     console.log(`   POST /fetch_key_name_and_resources - Get package.json and env vars`);
     console.log(`   POST /execute                    - Execute code or commands`);
-    console.log(`   POST /ollama/chat                - Chat with Phi3 model via Ollama`);
-    console.log(`   GET  /ollama/status              - Check Ollama and Phi3 status`);
-    console.log(`🤖 Ollama integration:`);
-    console.log(`   - Microsoft Phi3 model ready for chat`);
+    console.log(`   POST /local-llm/initialize         - Initialize Local LLM`);
+    console.log(`   GET  /local-llm/status             - Get Local LLM status`);
+    console.log(`   POST /local-llm/chat               - Chat with Local LLM`);
+    console.log(`   POST /local-llm/stop               - Stop Local LLM`);
+    console.log(`   POST /ollama/chat                 - Chat with Gemma model via Ollama`);
+    console.log(`   GET  /ollama/status               - Check Ollama and Gemma status`);
+    console.log(`🤖 Local LLM integration:`);
+    console.log(`   - Gemma 3 1B model support`);
+    console.log(`   - On-demand initialization`);
     console.log(`   - Ollama API: http://localhost:11434`);
     console.log(`🔧 Async improvements:`);
     console.log(`   - Configurable async timeout (default: 5000ms)`);

@@ -1,7 +1,5 @@
 {
-  "setupTime": "2025-06-07T16:38:32.646Z",
-  "ollamaRunning": true,
-  "gemma3Available": false,
-  "apiUrl": "http://localhost:11434",
-  "ollamaPid": 94636
+  "installTime": "2025-06-07T23:49:34.110Z",
+  "ollamaInstalled": true,
+  "apiUrl": "http://localhost:11434"
 }
