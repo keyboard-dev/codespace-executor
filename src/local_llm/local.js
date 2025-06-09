@@ -7,7 +7,7 @@ const execAsync = promisify(exec);
 class LocalLLM {
     constructor() {
         this.ollamaProcess = null;
-        this.apiUrl = 'http://localhost:11434';
+        this.apiUrl = 'http://127.0.0.1:11434';
         this.model = 'gemma3:4b';
     }
 
