@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "../keyboard/keyboard-mcp"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}

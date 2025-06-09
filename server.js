@@ -240,11 +240,11 @@ const server = http.createServer((req, res) => {
             try {
                 const payload = JSON.parse(body);
 
-                const areResourcesValid = await checkIfResourcesAreValid(payload);
-                if (!areResourcesValid) {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Resources are not valid, make sure you have the correct environment variables and doc resources before trying to execute' }));
-                }
+                // const areResourcesValid = await checkIfResourcesAreValid(payload);
+                // if (!areResourcesValid) {
+                //     res.writeHead(400, { 'Content-Type': 'application/json' });
+                //     return res.end(JSON.stringify({ error: 'Resources are not valid, make sure you have the correct environment variables and doc resources before trying to execute' }));
+                // }
 
                 if (payload.code) {
                     console.log(payload.code);

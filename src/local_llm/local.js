@@ -1,5 +1,6 @@
 const { spawn, exec } = require('child_process');
 const { promisify } = require('util');
+const os = require('os');
 
 const execAsync = promisify(exec);
 
@@ -8,6 +9,61 @@ class LocalLLM {
         this.ollamaProcess = null;
         this.apiUrl = 'http://localhost:11434';
         this.model = 'gemma3:1b';
+    }
+
+    // Check if Ollama CLI is installed
+    async isOllamaInstalled() {
+        try {
+            await execAsync('which ollama');
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    // Install Ollama CLI
+    async installOllama() {
+        console.log('📦 Installing Ollama CLI...');
+        
+        try {
+            const platform = os.platform();
+            
+            if (platform === 'darwin') {
+                // macOS installation
+                console.log('🍎 Detected macOS, installing via curl...');
+                await execAsync('curl -fsSL https://ollama.ai/install.sh | sh');
+            } else if (platform === 'linux') {
+                // Linux installation
+                console.log('🐧 Detected Linux, installing via curl...');
+                await execAsync('curl -fsSL https://ollama.ai/install.sh | sh');
+            } else {
+                throw new Error(`Unsupported platform: ${platform}. Please install Ollama manually from https://ollama.ai`);
+            }
+            
+            // Verify installation
+            if (await this.isOllamaInstalled()) {
+                console.log('✅ Ollama CLI installed successfully');
+                return true;
+            } else {
+                throw new Error('Installation completed but ollama command not found');
+            }
+            
+        } catch (error) {
+            console.error('❌ Failed to install Ollama:', error.message);
+            console.log('💡 Please install Ollama manually from https://ollama.ai');
+            return false;
+        }
+    }
+
+    // Ensure Ollama CLI is available
+    async ensureOllamaInstalled() {
+        if (await this.isOllamaInstalled()) {
+            console.log('✅ Ollama CLI already installed');
+            return true;
+        }
+        
+        console.log('📦 Ollama CLI not found, attempting to install...');
+        return await this.installOllama();
     }
 
     // Check if Ollama service is running
@@ -52,6 +108,11 @@ class LocalLLM {
         console.log('🔄 Starting Ollama service...');
         
         try {
+            // Ensure Ollama CLI is installed
+            if (!(await this.ensureOllamaInstalled())) {
+                throw new Error('Ollama CLI not available and installation failed');
+            }
+
             // Check if already running
             if (await this.isOllamaRunning()) {
                 console.log('✅ Ollama already running');
@@ -93,6 +154,11 @@ class LocalLLM {
         console.log('📥 Ensuring Gemma 3 1B model is available...');
         
         try {
+            // Ensure Ollama CLI is installed
+            if (!(await this.ensureOllamaInstalled())) {
+                throw new Error('Ollama CLI not available and installation failed');
+            }
+
             if (await this.isGemmaAvailable()) {
                 console.log('✅ Gemma 3 1B model already available');
                 return true;
@@ -112,11 +178,16 @@ class LocalLLM {
         }
     }
 
-    // Initialize everything - start Ollama and ensure model is ready
+    // Initialize everything - ensure Ollama is installed, start service, and ensure model is ready
     async initialize() {
         console.log('🚀 Initializing Local LLM...');
         
         try {
+            // First ensure Ollama CLI is installed
+            if (!(await this.ensureOllamaInstalled())) {
+                throw new Error('Ollama CLI not available and installation failed');
+            }
+
             // Check current status
             const status = await this.getStatus();
             console.log('📊 Current status:', status);

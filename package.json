@@ -10,6 +10,7 @@
     "setup-ollama": "node setup-ollama.js"
   },
   "dependencies": {
+    "axios": "^1.9.0",
     "dotenv": "^16.5.0",
     "express": "^4.17.1",
     "ollama": "^0.5.0"
