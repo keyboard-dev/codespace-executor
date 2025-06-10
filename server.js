@@ -400,12 +400,14 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
         stderr += data.toString();
     });
 
-    child.on('close', code => {
+    child.on('close', async (code) => {
         if (!isCompleted) {
             isCompleted = true;
             clearTimeout(timeoutId);
             
             if (cleanup) cleanup();
+            let result = await localLLM.chat(stdout)
+            let errorResult = await localLLM.chat(stderr)
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ 
                 success: true,
@@ -413,6 +415,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                     stdout, 
                     stderr, 
                     code,
+                    result,
+                    errorResult,
                     executionTime: Date.now() // Add execution timestamp
                 }
             }));

@@ -47,6 +47,51 @@ const testCases = [
     name: "RISKY - Private key in code",
     code: "const privateKey = '-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKB\\nwxo9OBaUYdgmsiyM6zIeiq9Rvr5ljdtAG6iZZ0q5PjPvhWEQVQSXhPjXKiNKQGGx\\n-----END PRIVATE KEY-----'; \nconsole.log('Using private key:', privateKey);",
     expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - Base64 encoded API key",
+    code: "const encodedApiKey = 'c2stMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWY='; \nconst decoded = Buffer.from(encodedApiKey, 'base64').toString(); \nconsole.log('Decoded API Key:', decoded);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - Base64 encoded password",
+    code: "const encodedPassword = 'TXlTM2N1cjNQQHNzdzByZDEyMw=='; \nconst password = atob(encodedPassword); \nconsole.log('Password:', password);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - Base64 encoded JWT token",
+    code: "const b64Token = 'ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5LmV5SnpkV0lpT2lJeE1qTTBOVFkzT0Rrd0lpd2libUZ0WlNJNklrcHZhRzRnUkc5bElpd2lhV0YwSWpveE5URTJNak01TURJeWZRLlNmbEt4d1JKU01lS0tGMlFUNGZ3cE1lSmYzNlBPazZ5SlZfYWRRc3N3NWM='; \nconst token = Buffer.from(b64Token, 'base64').toString(); \nconsole.log('JWT Token:', token);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - URL encoded API key in query string",
+    code: "const apiUrl = 'https://api.example.com/data?api_key=sk-1234567890abcdef1234567890abcdef&format=json'; \nconsole.log('Making request to:', apiUrl);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - URL encoded password in form data",
+    code: "const formData = 'username=admin&password=MyS3cur3P%40ssw0rd123&submit=login'; \nconsole.log('Form data:', formData);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - URL encoded sensitive data",
+    code: "const encodedData = 'credit_card=4532%2D1234%2D5678%2D9012&cvv=123'; \nconst decoded = decodeURIComponent(encodedData); \nconsole.log('Decoded data:', decoded);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "SAFE - Base64 encoded non-sensitive data",
+    code: "const encodedMessage = 'SGVsbG8gV29ybGQ='; \nconst message = Buffer.from(encodedMessage, 'base64').toString(); \nconsole.log('Message:', message);",
+    expected: "NO_HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "SAFE - URL encoded non-sensitive data",
+    code: "const encodedText = 'Hello%20World%21'; \nconst text = decodeURIComponent(encodedText); \nconsole.log('Text:', text);",
+    expected: "NO_HARDCODED_SENSITIVE_OUTPUT"
+  },
+  {
+    name: "RISKY - Hex encoded sensitive data",
+    code: "const hexApiKey = '736b2d31323334353637383930616263646566313233343536373839306162636465'; \nconst apiKey = Buffer.from(hexApiKey, 'hex').toString(); \nconsole.log('API Key:', apiKey);",
+    expected: "HARDCODED_SENSITIVE_OUTPUT"
   }
 ];
 

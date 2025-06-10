@@ -122,7 +122,11 @@ class LocalLLM {
             // Start Ollama service
             this.ollamaProcess = spawn('ollama', ['serve'], {
                 detached: true,
-                stdio: ['ignore', 'ignore', 'ignore']
+                stdio: ['ignore', 'pipe', 'pipe'],
+                env: {
+                    ...process.env,
+                    OLLAMA_HOST: '0.0.0.0:11434'  // Explicitly bind to all interfaces
+                }
             });
             
             this.ollamaProcess.unref();
@@ -273,6 +277,48 @@ class LocalLLM {
                 model: model
             };
             
+        } catch (error) {
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    // Analyze code for hardcoded sensitive data
+    async analyzeResponse(code, options = {}) {
+        try {
+            const prompt = `Output to eval: ${code}
+
+Can you evaluate the string or output and detect if there is any hardcoded sensitive data? Sensitive data but does not include pointers or variables referring the information. If you detect any sensitive data, respond with 'HARDCODED_SENSITIVE_OUTPUT'. If you do not see any raw sensitive values, respond with 'NO_HARDCODED_SENSITIVE_OUTPUT'`;
+
+            const result = await this.chat(prompt, {
+                ...options,
+                temperature: 0.1 // Use low temperature for consistent responses
+            });
+
+            if (!result.success) {
+                return {
+                    success: false,
+                    error: result.error
+                };
+            }
+
+            // Extract the response and clean it up
+            const response = result.response.trim().toUpperCase();
+            
+            // Check if response contains the expected outputs
+            const hasSensitive = response.includes('HARDCODED_SENSITIVE_OUTPUT');
+            const hasNoSensitive = response.includes('NO_HARDCODED_SENSITIVE_OUTPUT');
+
+            return {
+                success: true,
+                hasSensitiveData: hasSensitive,
+                isSafe: hasNoSensitive,
+                rawResponse: result.response,
+                model: result.model
+            };
+
         } catch (error) {
             return {
                 success: false,
