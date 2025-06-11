@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "."
+		},
+		{
+			"path": "../keyboard/local-model-evaluator"
 		}
 	],
 	"settings": {}

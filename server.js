@@ -406,8 +406,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             clearTimeout(timeoutId);
             
             if (cleanup) cleanup();
-            let result = await localLLM.chat(stdout)
-            let errorResult = await localLLM.chat(stderr)
+            let result = await localLLM.analyzeResponse(stdout)
+            let errorResult = await localLLM.analyzeResponse(stderr)
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ 
                 success: true,

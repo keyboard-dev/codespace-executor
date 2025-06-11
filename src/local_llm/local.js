@@ -288,9 +288,14 @@ class LocalLLM {
     // Analyze code for hardcoded sensitive data
     async analyzeResponse(code, options = {}) {
         try {
-            const prompt = `Output to eval: ${code}
+            const prompt = `-----Output to eval-----
+            ${code}
+            -----Output to eval-----
 
-Can you evaluate the string or output and detect if there is any hardcoded sensitive data? Sensitive data but does not include pointers or variables referring the information. If you detect any sensitive data, respond with 'HARDCODED_SENSITIVE_OUTPUT'. If you do not see any raw sensitive values, respond with 'NO_HARDCODED_SENSITIVE_OUTPUT'`;
+            Can you evaluate the string or output and detect if there is any hardcoded sensitive data? 
+            Sensitive data but does not include pointers or variables referring the information. 
+            If you detect any sensitive data, respond with 'HARDCODED_SENSITIVE_OUTPUT'. 
+            If you do not see any raw sensitive values, respond with 'NO_HARDCODED_SENSITIVE_OUTPUT'`;
 
             const result = await this.chat(prompt, {
                 ...options,
