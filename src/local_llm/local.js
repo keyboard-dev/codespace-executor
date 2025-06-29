@@ -8,7 +8,7 @@ class LocalLLM {
     constructor() {
         this.ollamaProcess = null;
         this.apiUrl = 'http://127.0.0.1:11434';
-        this.model = 'gemma3:4b';
+        this.model = 'gemma3n:e4b';
     }
 
     // Check if Ollama CLI is installed

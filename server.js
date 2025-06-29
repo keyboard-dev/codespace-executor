@@ -249,6 +249,7 @@ const server = http.createServer((req, res) => {
                 if (payload.code) {
                     console.log(payload.code);
                     // Enhanced code execution with async support
+                    
                     executeCodeWithAsyncSupport(payload, res);
                 } else if (payload.command) {
                     // Handle command execution
@@ -352,7 +353,8 @@ process.on('uncaughtException', (error) => {
             }
         }, {
             timeout: payload.timeout || 30000, // 30 second default timeout
-            env: { ...process.env, ...payload.env } // Allow custom environment variables
+            env: { ...process.env, ...payload.env }, // Allow custom environment variables
+            ai_eval: payload.ai_eval || false // Enable AI evaluation of output
         });
         
     } catch (error) {
