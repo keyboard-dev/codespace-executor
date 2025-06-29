@@ -271,7 +271,7 @@ const server = http.createServer((req, res) => {
 });
 
 // Enhanced code execution function with better async support
-function executeCodeWithAsyncSupport(payload, res) {
+async function executeCodeWithAsyncSupport(payload, res) {
     const tempFile = `temp_${Date.now()}.js`;
     let codeToExecute = payload.code;
     
@@ -343,6 +343,36 @@ process.on('uncaughtException', (error) => {
     
     try {
         fs.writeFileSync(tempFile, codeToExecute);
+        const allowedEnvVars = [
+            'PATH',
+            'HOME',
+            'USER',
+            'NODE_ENV',
+            'TZ',
+            'LANG',
+            'LC_ALL',
+            'PWD',
+            'TMPDIR',
+            'TEMP',
+            'TMP'
+        ];
+        
+        // Create limited environment with only allowed variables
+        const limitedEnv = {};
+        
+        // Add basic allowed environment variables
+        allowedEnvVars.forEach(key => {
+            if (process.env[key]) {
+                limitedEnv[key] = process.env[key];
+            }
+        });
+        
+        // Add all environment variables that start with "KEYBOARD"
+        Object.keys(process.env).forEach(key => {
+            if (key.startsWith('KEYBOARD')) {
+                limitedEnv[key] = process.env[key];
+            }
+        });
         
         // Enhanced execution with timeout
         executeProcessWithTimeout('node', [tempFile], res, () => {
@@ -353,7 +383,7 @@ process.on('uncaughtException', (error) => {
             }
         }, {
             timeout: payload.timeout || 30000, // 30 second default timeout
-            env: { ...process.env, ...payload.env }, // Allow custom environment variables
+            env: { ...limitedEnv }, // Allow custom environment variables
             ai_eval: payload.ai_eval || false // Enable AI evaluation of output
         });
         
@@ -369,9 +399,15 @@ process.on('uncaughtException', (error) => {
 // Enhanced process execution with timeout and better error handling
 function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {}) {
     const timeout = options.timeout || 30000;
-    const env = options.env || process.env;
     
-    const child = spawn(cmd, args, { env });
+    // Define allowed environment variables for security
+
+    
+    // Allow specific custom env vars from payload if they're safe
+    const safeCustomEnvVars = ['NODE_OPTIONS', 'DEBUG'];
+
+    
+    const child = spawn(cmd, args, { env: options?.env || {}});
     let stdout = '';
     let stderr = '';
     let isCompleted = false;
@@ -408,6 +444,18 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             clearTimeout(timeoutId);
             
             if (cleanup) cleanup();
+            let aiAnalysis;
+            console.log(options)
+            if(options.ai_eval) {
+                console.log("AI EVALUATION")
+                let result = await localLLM.analyzeResponse(stdout)
+                console.log(result)
+                let errorResult = await localLLM.analyzeResponse(stderr)
+                aiAnalysis = {
+                    stdout: result,
+                    stderr: errorResult
+                }
+            }
             // let result = await localLLM.analyzeResponse(stdout)
             // let errorResult = await localLLM.analyzeResponse(stderr)
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -417,6 +465,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                     stdout, 
                     stderr, 
                     code,
+                    aiAnalysis,
                     executionTime: Date.now() // Add execution timestamp
                 }
             }));
