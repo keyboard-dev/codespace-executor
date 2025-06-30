@@ -301,6 +301,50 @@ class LocalLLM {
     }
   }
 
+  async chat(message, options = {}) {
+    try {
+      // Ensure everything is ready
+      const status = await this.getStatus();
+      if (!status.ready) {
+        throw new Error("Local LLM not ready. Please initialize first.");
+      }
+
+      const model = options.model || this.model;
+      const temperature = options.temperature || 0.7;
+
+      // Use Ollama API directly
+      const response = await execAsync(
+        `curl -s -X POST ${
+          this.apiUrl
+        }/api/chat -H "Content-Type: application/json" -d '${JSON.stringify({
+          model: model,
+          messages: [{ role: "user", content: message }],
+          stream: false,
+          options: {
+            temperature: temperature,
+          },
+        })}'`
+      );
+
+      const data = JSON.parse(response.stdout);
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      return {
+        success: true,
+        response: data.message.content,
+        model: model,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
   // Analyze code for hardcoded sensitive data
   async analyzeResponse(code, options = {}) {
     try {
