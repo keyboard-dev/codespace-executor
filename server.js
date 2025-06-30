@@ -450,11 +450,12 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 console.log("AI EVALUATION")
                 let outputsOfCodeExecution = `
                 output of code execution: 
-                
+
                 <stdout>${stdout}</stdout>
                 
                 <stderr>${stderr}</stderr>`
-                let result = await localLLM.analyzeResponse(JSON.stringify())
+                let result = await localLLM.analyzeResponse(JSON.stringify(outputsOfCodeExecution))
+                aiAnalysis = result
             }
             // let result = await localLLM.analyzeResponse(stdout)
             // let errorResult = await localLLM.analyzeResponse(stderr)
