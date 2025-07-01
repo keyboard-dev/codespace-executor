@@ -289,9 +289,11 @@ class LocalLLM {
         throw new Error(data.error);
       }
 
+      console.log(data)
+
       return {
         success: true,
-        response: data.message.content,
+        response: data.response,
         model: model,
       };
     } catch (error) {

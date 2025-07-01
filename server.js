@@ -249,7 +249,7 @@ const server = http.createServer((req, res) => {
                 if (payload.code) {
                     console.log(payload.code);
                     // Enhanced code execution with async support
-                    
+                    console.log(payload)
                     executeCodeWithAsyncSupport(payload, res);
                 } else if (payload.command) {
                     // Handle command execution
@@ -412,6 +412,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
     let stderr = '';
     let isCompleted = false;
     
+    
     // Set up timeout
     const timeoutId = setTimeout(() => {
         if (!isCompleted) {
@@ -447,6 +448,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             let aiAnalysis;
             console.log(options)
             if(options.ai_eval) {
+                try {
                 console.log("AI EVALUATION")
                 let outputsOfCodeExecution = `
                 output of code execution: 
@@ -455,12 +457,18 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 
                 <stderr>${stderr}</stderr>`
                 let result = await localLLM.analyzeResponse(JSON.stringify(outputsOfCodeExecution))
+                console.log("this is the result", result)
                 aiAnalysis = result
+                
+                } catch(e) {
+                    console.log("this is the error")
+                    console.log(e)
+                }
             }
-            // let result = await localLLM.analyzeResponse(stdout)
-            // let errorResult = await localLLM.analyzeResponse(stderr)
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
+
+            let finalResult;
+            try {
+               finalResult = { 
                 success: true,
                 data: {
                     stdout, 
@@ -469,7 +477,13 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                     aiAnalysis,
                     executionTime: Date.now() // Add execution timestamp
                 }
-            }));
+            }
+            console.log(finalResult)
+            } catch(e) {
+                console.log(e)
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(finalResult));
         }
     });
 
