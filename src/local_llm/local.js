@@ -1,6 +1,8 @@
 const { spawn, exec } = require("child_process");
 const { promisify } = require("util");
 const os = require("os");
+const https = require("https");
+const http = require("http");
 
 const execAsync = promisify(exec);
 
@@ -9,6 +11,52 @@ class LocalLLM {
     this.ollamaProcess = null;
     this.apiUrl = "http://127.0.0.1:11434";
     this.model = "hf.co/unsloth/gemma-3n-E2B-it-GGUF:Q4_K_M";
+  }
+
+  // Helper method to make HTTP requests
+  async makeRequest(url, data) {
+    return new Promise((resolve, reject) => {
+      const urlObj = new URL(url);
+      const isHttps = urlObj.protocol === 'https:';
+      const client = isHttps ? https : http;
+      
+      const postData = JSON.stringify(data);
+      
+      const options = {
+        hostname: urlObj.hostname,
+        port: urlObj.port || (isHttps ? 443 : 80),
+        path: urlObj.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+
+      const req = client.request(options, (res) => {
+        let body = '';
+        
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            const jsonData = JSON.parse(body);
+            resolve(jsonData);
+          } catch (error) {
+            reject(new Error(`Failed to parse JSON: ${error.message}`));
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        reject(error);
+      });
+
+      req.write(postData);
+      req.end();
+    });
   }
 
   // Check if Ollama CLI is installed
@@ -247,7 +295,7 @@ class LocalLLM {
     }
   }
 
-  // Chat with the model
+  // Chat with the model - FIXED VERSION
   async evaluate(message, options = {}) {
     try {
       // Ensure everything is ready
@@ -259,37 +307,34 @@ class LocalLLM {
       const model = options.model || this.model;
       const temperature = options.temperature || 0;
 
-      // Use Ollama API directly
-      const prompt = `You are a system that is reviewing code responses of executed code.  You main goal is detect if there is any hard coded or exposed sensitive data in the content.  Remember we want to avoid false positives, so if there is a pointer or variable AKA using an environment variable is ok as long as it is not showing the real value, and you should not flag it as sensitive data.<data_to_eval> ${message} </data_to_eval>` 
-      const response = await execAsync(
-        `curl -s -X POST ${
-          this.apiUrl
-        }/api/generate -H "Content-Type: application/json" -d '${JSON.stringify({
-          model: model,
-          prompt: prompt,
-          stream: false,
-          format: {
-            type: "object",
-            properties: {
-              VISIBLE_HARD_CODED_API_KEY_OR_RAW_SENSITIVE_DATA: {
-                type: "boolean",
-              },
+      // Use proper HTTP request instead of shell command
+      const prompt = `You are a system that is reviewing code responses of executed code. You main goal is detect if there is any hard coded or exposed sensitive data in the content. Remember we want to avoid false positives, so if there is a pointer or variable AKA using an environment variable is ok as long as it is not showing the real value, and you should not flag it as sensitive data.<data_to_eval> ${message} </data_to_eval>`;
+      
+      const requestData = {
+        model: model,
+        prompt: prompt,
+        stream: false,
+        format: {
+          type: "object",
+          properties: {
+            VISIBLE_HARD_CODED_API_KEY_OR_RAW_SENSITIVE_DATA: {
+              type: "boolean",
             },
-            required: ["VISIBLE_HARD_CODED_API_KEY_OR_RAW_SENSITIVE_DATA"],
           },
-          options: {
-            temperature: temperature,
-          },
-        })}'`
-      );
+          required: ["VISIBLE_HARD_CODED_API_KEY_OR_RAW_SENSITIVE_DATA"],
+        },
+        options: {
+          temperature: temperature,
+        },
+      };
 
-      const data = JSON.parse(response.stdout);
+      const data = await this.makeRequest(`${this.apiUrl}/api/generate`, requestData);
 
       if (data.error) {
         throw new Error(data.error);
       }
 
-      console.log(data)
+      console.log("LLM Response:", data);
 
       return {
         success: true,
@@ -297,6 +342,7 @@ class LocalLLM {
         model: model,
       };
     } catch (error) {
+      console.error("Evaluate error:", error);
       return {
         success: false,
         error: error.message,
@@ -304,6 +350,7 @@ class LocalLLM {
     }
   }
 
+  // Chat with the model - FIXED VERSION
   async chat(message, options = {}) {
     try {
       // Ensure everything is ready
@@ -315,21 +362,16 @@ class LocalLLM {
       const model = options.model || this.model;
       const temperature = options.temperature || 0.7;
 
-      // Use Ollama API directly
-      const response = await execAsync(
-        `curl -s -X POST ${
-          this.apiUrl
-        }/api/chat -H "Content-Type: application/json" -d '${JSON.stringify({
-          model: model,
-          messages: [{ role: "user", content: message }],
-          stream: false,
-          options: {
-            temperature: temperature,
-          },
-        })}'`
-      );
+      const requestData = {
+        model: model,
+        messages: [{ role: "user", content: message }],
+        stream: false,
+        options: {
+          temperature: temperature,
+        },
+      };
 
-      const data = JSON.parse(response.stdout);
+      const data = await this.makeRequest(`${this.apiUrl}/api/chat`, requestData);
 
       if (data.error) {
         throw new Error(data.error);
@@ -359,11 +401,11 @@ class LocalLLM {
         ...options,
         temperature: 0, // Use low temperature for consistent responses
       });               
-      console.log(result)
+      console.log("Analysis result:", result);
 
       return result?.response;
     } catch (error) {
-      console.log(error)
+      console.log("Analysis error:", error);
       return {
         success: false,
         error: error.message,
