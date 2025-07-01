@@ -86,7 +86,7 @@ class LocalLLM {
         data.models &&
         data.models.some(
           (model) =>
-            model.name.includes("gemma3:1b") || model.name.includes("gemma3")
+            model.name.includes("gemma3:1b") || model.name.includes("gemma")
         )
       );
     } catch (error) {
