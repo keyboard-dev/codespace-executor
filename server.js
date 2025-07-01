@@ -18,6 +18,39 @@ try {
     console.log('⚠️  Ollama package not available, using LocalLLM module instead');
 }
 
+// 🚀 NEW: Start Ollama setup in background AFTER server is running
+function startOllamaSetupInBackground() {
+    console.log('🚀 Server is running! Starting Ollama setup in background...');
+    
+    try {
+        const setupProcess = spawn('node', ['setup-ollama.js'], {
+            detached: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            cwd: __dirname
+        });
+        
+        // Optional: Log setup output (but don't block server)
+        setupProcess.stdout.on('data', (data) => {
+            console.log(`[Background Ollama] ${data.toString().trim()}`);
+        });
+        
+        setupProcess.stderr.on('data', (data) => {
+            console.log(`[Background Ollama Error] ${data.toString().trim()}`);
+        });
+        
+        setupProcess.on('close', (code) => {
+            console.log(`[Background Ollama] Setup finished with code ${code}`);
+        });
+        
+        // Don't wait for the setup process - let it run independently
+        setupProcess.unref();
+        
+    } catch (error) {
+        console.log(`⚠️  Could not start background Ollama setup: ${error.message}`);
+        // Don't fail server startup if Ollama setup fails
+    }
+}
+
 const server = http.createServer((req, res) => {
     if (req.url === '/') {
         if (req.method === 'GET') {
@@ -515,24 +548,11 @@ function executeProcess(cmd, args, res, cleanup = null) {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🚀 Enhanced server running at http://localhost:${PORT}/`);
-    console.log(`📝 Available endpoints:`);
-    console.log(`   GET  /                           - Hello World`);
-    console.log(`   POST /create_project             - Create new project`);
-    console.log(`   POST /fetch_key_name_and_resources - Get package.json and env vars`);
-    console.log(`   POST /execute                    - Execute code or commands`);
-    console.log(`   POST /local-llm/initialize         - Initialize Local LLM`);
-    console.log(`   GET  /local-llm/status             - Get Local LLM status`);
-    console.log(`   POST /local-llm/chat               - Chat with Local LLM`);
-    console.log(`   POST /local-llm/stop               - Stop Local LLM`);
-    console.log(`   POST /ollama/chat                 - Chat with Gemma model via Ollama`);
-    console.log(`   GET  /ollama/status               - Check Ollama and Gemma status`);
-    console.log(`🤖 Local LLM integration:`);
-    console.log(`   - Gemma 3 1B model support`);
-    console.log(`   - On-demand initialization`);
-    console.log(`   - Ollama API: http://localhost:11434`);
-    console.log(`🔧 Async improvements:`);
-    console.log(`   - Configurable async timeout (default: 5000ms)`);
-    console.log(`   - Better error reporting and stack traces`);
-    console.log(`   - Enhanced HTTPS/API call detection`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📍 Server available at: http://localhost:${PORT}`);
+    
+    // 🎯 KEY: Start Ollama setup ONLY after server is confirmed running
+    setTimeout(() => {
+        startOllamaSetupInBackground();
+    }, 1000); // Wait 1 second to ensure server is fully up
 });
