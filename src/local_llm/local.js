@@ -8,7 +8,7 @@ class LocalLLM {
   constructor() {
     this.ollamaProcess = null;
     this.apiUrl = "http://127.0.0.1:11434";
-    this.model = "gemma3n:e4b";
+    this.model = "gemma3n:e2b";
   }
 
   // Check if Ollama CLI is installed
@@ -265,16 +265,16 @@ class LocalLLM {
           this.apiUrl
         }/api/chat -H "Content-Type: application/json" -d '${JSON.stringify({
           model: model,
-          messages: [{ role: "user", content: message }],
+          messages: [{ role: "user", content: `Is there sensitive data in the content: <data_to_eval> ${message} </data_to_eval>` }],
           stream: false,
           format: {
             type: "object",
             properties: {
-              EXPOSES_API_KEY_OR_SENSITIVE_DATA: {
+              IS_THERE_AN_API_KEY_OR_SENSITIVE_DATA: {
                 type: "boolean",
               },
             },
-            required: ["EXPOSES_API_KEY_OR_SENSITIVE_DATA"],
+            required: ["IS_THERE_AN_API_KEY_OR_SENSITIVE_DATA"],
           },
           options: {
             temperature: temperature,
