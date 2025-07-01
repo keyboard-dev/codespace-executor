@@ -257,24 +257,25 @@ class LocalLLM {
       }
 
       const model = options.model || this.model;
-      const temperature = options.temperature || 0.7;
+      const temperature = options.temperature || 0;
 
       // Use Ollama API directly
+      const prompt = `You are a system that is reviewing code responses of executed code.  You main goal is detect if there is any hard coded or exposed sensitive data in the content.  Remember we want to avoid false positives, so if there is a pointer or variable AKA using an environment variable is ok as long as it is not showing the real value, and you should not flag it as sensitive data.<data_to_eval> ${message} </data_to_eval>` 
       const response = await execAsync(
         `curl -s -X POST ${
           this.apiUrl
-        }/api/chat -H "Content-Type: application/json" -d '${JSON.stringify({
+        }/api/generate -H "Content-Type: application/json" -d '${JSON.stringify({
           model: model,
-          messages: [{ role: "user", content: `Is there sensitive data in the content: <data_to_eval> ${message} </data_to_eval>` }],
+          prompt: prompt,
           stream: false,
           format: {
             type: "object",
             properties: {
-              IS_THERE_AN_API_KEY_OR_SENSITIVE_DATA: {
+              VISIBLE_HARD_CODED_API_KEY_OR_RAW_SENSITIVE_DATA: {
                 type: "boolean",
               },
             },
-            required: ["IS_THERE_AN_API_KEY_OR_SENSITIVE_DATA"],
+            required: ["VISIBLE_HARD_CODED_API_KEY_OR_RAW_SENSITIVE_DATA"],
           },
           options: {
             temperature: temperature,
@@ -354,7 +355,7 @@ class LocalLLM {
 
       const result = await this.evaluate(prompt, {
         ...options,
-        temperature: 0.1, // Use low temperature for consistent responses
+        temperature: 0, // Use low temperature for consistent responses
       });               
       console.log(result)
 
