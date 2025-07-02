@@ -552,7 +552,5 @@ server.listen(PORT, () => {
     console.log(`📍 Server available at: http://localhost:${PORT}`);
     
     // 🎯 KEY: Start Ollama setup ONLY after server is confirmed running
-    setTimeout(() => {
-        startOllamaSetupInBackground();
-    }, 1000); // Wait 1 second to ensure server is fully up
+ 
 });
