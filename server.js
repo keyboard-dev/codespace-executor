@@ -2,8 +2,72 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { randomBytes, createCipheriv, createDecipheriv } = require('crypto');
 // const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
+
+// Encryption utilities
+const ALGORITHM = 'aes-256-cbc';
+
+function getEncryptionKey() {
+    const key = process.env.KB_ENCRYPTION_SECRET;
+    if (!key) {
+        throw new Error('KB_ENCRYPTION_SECRET environment variable is required for encryption');
+    }
+    // If key is hex string, convert to buffer, otherwise use as is and pad/truncate to 32 bytes
+    if (key.length === 64 && /^[0-9a-fA-F]+$/.test(key)) {
+        return Buffer.from(key, 'hex');
+    } else {
+        // Convert string to buffer and ensure it's 32 bytes
+        const buffer = Buffer.from(key, 'utf8');
+        if (buffer.length === 32) {
+            return buffer;
+        } else if (buffer.length < 32) {
+            // Pad with zeros
+            return Buffer.concat([buffer, Buffer.alloc(32 - buffer.length)]);
+        } else {
+            // Truncate to 32 bytes
+            return buffer.slice(0, 32);
+        }
+    }
+}
+
+function encrypt(text) {
+    try {
+        const encryptionKey = getEncryptionKey();
+        const iv = randomBytes(16);
+        const cipher = createCipheriv(ALGORITHM, encryptionKey, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        const ivString = iv.toString('hex');
+        return ivString + ':' + encrypted;
+    } catch (error) {
+        console.error('Encryption error:', error);
+        throw new Error('Failed to encrypt data');
+    }
+}
+
+function decrypt(encryptedText) {
+    try {
+        const encryptionKey = getEncryptionKey();
+        const [ivHex, encrypted] = encryptedText.split(':');
+        
+        if (!ivHex || !encrypted) {
+            throw new Error('Invalid encrypted data format');
+        }
+        
+        const iv = Buffer.from(ivHex, 'hex');
+        const decipher = createDecipheriv(ALGORITHM, encryptionKey, iv);
+        
+        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        
+        return decrypted;
+    } catch (error) {
+        console.error('Decryption error:', error);
+        throw new Error('Failed to decrypt data');
+    }
+}
 
 // Local LLM integration
 const LocalLLM = require('./src/local_llm/local');
@@ -273,6 +337,41 @@ const server = http.createServer((req, res) => {
             try {
                 const payload = JSON.parse(body);
 
+                // Handle encryption if encrypt_messages is true
+                if (payload.encrypt_messages) {
+                    try {
+                        // Check if KB_ENCRYPTION_SECRET is available
+                        if (!process.env.KB_ENCRYPTION_SECRET) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            return res.end(JSON.stringify({ 
+                                error: 'KB_ENCRYPTION_SECRET environment variable is required when encrypt_messages is true' 
+                            }));
+                        }
+
+                        // Decrypt the code if it's encrypted
+                        if (payload.code) {
+                            try {
+                                payload.code = decrypt(payload.code);
+                                console.log('🔓 Code decrypted successfully');
+                            } catch (decryptError) {
+                                console.error('❌ Failed to decrypt code:', decryptError.message);
+                                res.writeHead(400, { 'Content-Type': 'application/json' });
+                                return res.end(JSON.stringify({ 
+                                    error: 'Failed to decrypt code', 
+                                    details: decryptError.message 
+                                }));
+                            }
+                        }
+                    } catch (encryptionError) {
+                        console.error('❌ Encryption setup error:', encryptionError.message);
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        return res.end(JSON.stringify({ 
+                            error: 'Encryption setup failed', 
+                            details: encryptionError.message 
+                        }));
+                    }
+                }
+
                 // const areResourcesValid = await checkIfResourcesAreValid(payload);
                 // if (!areResourcesValid) {
                 //     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -417,7 +516,8 @@ process.on('uncaughtException', (error) => {
         }, {
             timeout: payload.timeout || 30000, // 30 second default timeout
             env: { ...limitedEnv }, // Allow custom environment variables
-            ai_eval: payload.ai_eval || false // Enable AI evaluation of output
+            ai_eval: payload.ai_eval || false, // Enable AI evaluation of output
+            encrypt_messages: payload.encrypt_messages || false // Enable response encryption
         });
         
     } catch (error) {
@@ -453,14 +553,34 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             child.kill('SIGTERM');
             
             if (cleanup) cleanup();
-            res.writeHead(408, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
+            
+            let timeoutResult = { 
                 error: 'Execution timeout',
                 timeout: timeout,
                 stdout: stdout,
                 stderr: stderr,
                 message: `Process timed out after ${timeout}ms. Consider increasing timeout or optimizing async operations.`
-            }));
+            };
+            
+            // Encrypt the timeout response if encrypt_messages is true
+            if (options.encrypt_messages) {
+                try {
+                    const timeoutString = JSON.stringify(timeoutResult);
+                    const encryptedTimeout = encrypt(timeoutString);
+                    timeoutResult = {
+                        encrypted: true,
+                        data: encryptedTimeout
+                    };
+                    console.log('🔒 Timeout response encrypted successfully');
+                } catch (encryptError) {
+                    console.error('❌ Failed to encrypt timeout response:', encryptError.message);
+                    // Fall back to unencrypted timeout response with error indication
+                    timeoutResult.encryptionError = 'Failed to encrypt timeout response: ' + encryptError.message;
+                }
+            }
+            
+            res.writeHead(408, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(timeoutResult));
         }
     }, timeout);
     
@@ -512,6 +632,24 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 }
             }
             console.log(finalResult)
+            
+            // Encrypt the response if encrypt_messages is true
+            if (options.encrypt_messages) {
+                try {
+                    const responseString = JSON.stringify(finalResult);
+                    const encryptedResponse = encrypt(responseString);
+                    finalResult = {
+                        encrypted: true,
+                        data: encryptedResponse
+                    };
+                    console.log('🔒 Response encrypted successfully');
+                } catch (encryptError) {
+                    console.error('❌ Failed to encrypt response:', encryptError.message);
+                    // Fall back to unencrypted response with error indication
+                    finalResult.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                }
+            }
+            
             } catch(e) {
                 console.log(e)
             }
@@ -526,8 +664,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             clearTimeout(timeoutId);
             
             if (cleanup) cleanup();
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
+            
+            let errorResult = { 
                 success: false,
                 error: {
                     message: error.message,
@@ -536,7 +674,27 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                     stdout: stdout,
                     stderr: stderr
                 }
-            }));
+            };
+            
+            // Encrypt the error response if encrypt_messages is true
+            if (options.encrypt_messages) {
+                try {
+                    const errorString = JSON.stringify(errorResult);
+                    const encryptedError = encrypt(errorString);
+                    errorResult = {
+                        encrypted: true,
+                        data: encryptedError
+                    };
+                    console.log('🔒 Error response encrypted successfully');
+                } catch (encryptError) {
+                    console.error('❌ Failed to encrypt error response:', encryptError.message);
+                    // Fall back to unencrypted error response with error indication
+                    errorResult.encryptionError = 'Failed to encrypt error response: ' + encryptError.message;
+                }
+            }
+            
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(errorResult));
         }
     });
 }
