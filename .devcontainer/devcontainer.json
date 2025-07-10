@@ -1,4 +1,5 @@
 {
+    "postCreateCommand": "npm install",
     "postStartCommand": "npm run start",
     "forwardPorts": [3000, 3001, 11434]
 }
