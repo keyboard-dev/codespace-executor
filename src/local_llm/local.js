@@ -71,18 +71,18 @@ class LocalLLM {
 
   // Install Ollama CLI
   async installOllama() {
-    console.log("📦 Installing Ollama CLI...");
+
 
     try {
       const platform = os.platform();
 
       if (platform === "darwin") {
         // macOS installation
-        console.log("🍎 Detected macOS, installing via curl...");
+
         await execAsync("curl -fsSL https://ollama.ai/install.sh | sh");
       } else if (platform === "linux") {
         // Linux installation
-        console.log("🐧 Detected Linux, installing via curl...");
+
         await execAsync("curl -fsSL https://ollama.ai/install.sh | sh");
       } else {
         throw new Error(
@@ -92,14 +92,14 @@ class LocalLLM {
 
       // Verify installation
       if (await this.isOllamaInstalled()) {
-        console.log("✅ Ollama CLI installed successfully");
+
         return true;
       } else {
         throw new Error("Installation completed but ollama command not found");
       }
     } catch (error) {
       console.error("❌ Failed to install Ollama:", error.message);
-      console.log("💡 Please install Ollama manually from https://ollama.ai");
+
       return false;
     }
   }
@@ -107,11 +107,11 @@ class LocalLLM {
   // Ensure Ollama CLI is available
   async ensureOllamaInstalled() {
     if (await this.isOllamaInstalled()) {
-      console.log("✅ Ollama CLI already installed");
+
       return true;
     }
 
-    console.log("📦 Ollama CLI not found, attempting to install...");
+
     return await this.installOllama();
   }
 
@@ -158,7 +158,7 @@ class LocalLLM {
 
   // Start Ollama service
   async startOllama() {
-    console.log("🔄 Starting Ollama service...");
+
 
     try {
       // Ensure Ollama CLI is installed
@@ -168,7 +168,7 @@ class LocalLLM {
 
       // Check if already running
       if (await this.isOllamaRunning()) {
-        console.log("✅ Ollama already running");
+
         return true;
       }
 
@@ -192,7 +192,7 @@ class LocalLLM {
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         if (await this.isOllamaRunning()) {
-          console.log("✅ Ollama service started successfully");
+
           return true;
         }
         attempts++;
@@ -207,7 +207,7 @@ class LocalLLM {
 
   // Pull Gemma model if not available
   async ensureGemmaModel() {
-    console.log("📥 Ensuring Gemma 3 1B model is available...");
+
 
     try {
       // Ensure Ollama CLI is installed
@@ -216,7 +216,7 @@ class LocalLLM {
       }
 
       if (await this.isGemmaAvailable()) {
-        console.log("✅ Gemma 3 1B model already available");
+
         return true;
       }
 
@@ -227,7 +227,7 @@ class LocalLLM {
       // Pull model synchronously so we know when it's done
       await execAsync(`ollama pull ${this.model}`);
 
-      console.log("✅ Gemma 3 1B model pulled successfully");
+
       return true;
     } catch (error) {
       console.error("❌ Failed to pull Gemma model:", error.message);
@@ -237,7 +237,7 @@ class LocalLLM {
 
   // Initialize everything - ensure Ollama is installed, start service, and ensure model is ready
   async initialize() {
-    console.log("🚀 Initializing Local LLM...");
+
 
     try {
       // First ensure Ollama CLI is installed
@@ -247,7 +247,7 @@ class LocalLLM {
 
       // Check current status
       const status = await this.getStatus();
-      console.log("📊 Current status:", status);
+
 
       // Start Ollama if not running
       if (!status.ollamaRunning) {
@@ -265,9 +265,9 @@ class LocalLLM {
         }
       }
 
-      console.log("🎉 Local LLM initialized successfully!");
-      console.log(`📍 API available at: ${this.apiUrl}`);
-      console.log(`🤖 Model ready: ${this.model}`);
+
+
+
 
       return true;
     } catch (error) {
@@ -278,16 +278,16 @@ class LocalLLM {
 
   // Stop Ollama service
   async stop() {
-    console.log("🛑 Stopping Ollama service...");
+
 
     try {
       // Kill any running ollama processes
       await execAsync('pkill -f "ollama serve"');
-      console.log("✅ Ollama service stopped");
+
       return true;
     } catch (error) {
       if (error.code === 1) {
-        console.log("ℹ️  Ollama service was not running");
+
         return true;
       }
       console.error("❌ Failed to stop Ollama:", error.message);
@@ -334,7 +334,7 @@ class LocalLLM {
         throw new Error(data.error);
       }
 
-      console.log("LLM Response:", data);
+
 
       return {
         success: true,
@@ -401,11 +401,11 @@ class LocalLLM {
         ...options,
         temperature: 0, // Use low temperature for consistent responses
       });               
-      console.log("Analysis result:", result);
+
 
       return result?.response;
     } catch (error) {
-      console.log("Analysis error:", error);
+
       return {
         success: false,
         error: error.message,

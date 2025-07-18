@@ -22,9 +22,9 @@ async function checkIfResourcesAreValid(itemsToCheck) {
     let existingServerEnvVars = await retrieveEnvironmentVariableKeys();
     // Compare environmentVariableKeys with existingServerEnvVars
     const areEnvironmentVariablesMatching = compareArrays(environmentVariablesNames, existingServerEnvVars);    
-    console.log('Expected environment variables:', environmentVariablesNames);
-    console.log('Existing environment variables:', existingServerEnvVars);
-    console.log('Environment variables match:', areEnvironmentVariablesMatching);
+
+
+
     return areEnvironmentVariablesMatching
 }
 
