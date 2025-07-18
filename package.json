@@ -7,7 +7,8 @@
     "start": "npm install && node server.js",
     "dev": "npm install && node setup-ollama.js && node server.js",
     "serve": "node server.js",
-    "setup-ollama": "node setup-ollama.js"
+    "setup-ollama": "node setup-ollama.js",
+    "kill": "lsof -ti:3000 | xargs kill -9 || echo 'No process found on port 3000'"
   },
   "dependencies": {
     "@google-cloud/workstations": "^2.1.0",
