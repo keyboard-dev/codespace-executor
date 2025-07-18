@@ -14,7 +14,7 @@ router.get('/', (req, res) => {
 
 router.post('/execute', (req, res) => {
     const { command } = req.body;
-    console.log("command: ", command);
+
     if (!command) {
         return res.status(400).json({ error: 'Command is required' });
     }

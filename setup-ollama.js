@@ -5,7 +5,7 @@ const path = require('path');
 
 const execAsync = promisify(exec);
 
-console.log('🚀 Setting up Ollama and pulling model...');
+
 
 class OllamaSetup {
     constructor() {
@@ -18,7 +18,7 @@ class OllamaSetup {
     log(message) {
         const timestamp = new Date().toISOString();
         const logMessage = `[${timestamp}] ${message}`;
-        console.log(message);
+
         try {
             fs.appendFileSync(this.logFile, logMessage + '\n');
         } catch (error) {

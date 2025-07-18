@@ -79,12 +79,12 @@ try {
     const { Ollama } = require('ollama');
     ollamaClient = new Ollama({ host: 'http://localhost:11434' });
 } catch (error) {
-    console.log('⚠️  Ollama package not available, using LocalLLM module instead');
+
 }
 
 // 🚀 NEW: Start Ollama setup in background AFTER server is running
 function startOllamaSetupInBackground() {
-    console.log('🚀 Server is running! Starting Ollama setup in background...');
+
     
     try {
         const setupProcess = spawn('node', ['setup-ollama.js'], {
@@ -95,22 +95,22 @@ function startOllamaSetupInBackground() {
         
         // Optional: Log setup output (but don't block server)
         setupProcess.stdout.on('data', (data) => {
-            console.log(`[Background Ollama] ${data.toString().trim()}`);
+
         });
         
         setupProcess.stderr.on('data', (data) => {
-            console.log(`[Background Ollama Error] ${data.toString().trim()}`);
+
         });
         
         setupProcess.on('close', (code) => {
-            console.log(`[Background Ollama] Setup finished with code ${code}`);
+
         });
         
         // Don't wait for the setup process - let it run independently
         setupProcess.unref();
         
     } catch (error) {
-        console.log(`⚠️  Could not start background Ollama setup: ${error.message}`);
+
         // Don't fail server startup if Ollama setup fails
     }
 }
@@ -125,7 +125,7 @@ const server = http.createServer((req, res) => {
         // Initialize Local LLM (start Ollama and ensure model is ready)
         (async () => {
             try {
-                console.log('🚀 Initializing Local LLM via API request...');
+
                 const success = await localLLM.initialize();
                 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -329,17 +329,22 @@ const server = http.createServer((req, res) => {
     } else if(req.method === 'POST' && req.url === '/execute') {
         let body = '';
 
-        // Extract KEYBOARD_PROVIDER_USER_TOKEN_FOR_* headers
+        // Extract x-keyboard-provider-user-token-for-* headers
         const headerEnvVars = {};
         if (req.headers) {
             Object.keys(req.headers).forEach(headerName => {
-                // Convert header name to uppercase and replace hyphens with underscores
-                const envVarName = headerName.toUpperCase().replace(/-/g, '_');
-                
-                // Check if this is a KEYBOARD_PROVIDER_USER_TOKEN_FOR_ header
-                if (envVarName.startsWith('KEYBOARD_PROVIDER_USER_TOKEN_FOR_')) {
+                // Check if this is an x-keyboard-provider-user-token-for- header
+                if (headerName.toLowerCase().startsWith('x-keyboard-provider-user-token-for-')) {
+                    // Convert header name to environment variable format
+                    // x-keyboard-provider-user-token-for-google -> KEYBOARD_PROVIDER_USER_TOKEN_FOR_GOOGLE
+                    const envVarName = headerName
+                        .toLowerCase()
+                        .replace('x-', '') // Remove the x- prefix
+                        .toUpperCase()
+                        .replace(/-/g, '_'); // Replace hyphens with underscores
+                    
                     headerEnvVars[envVarName] = req.headers[headerName];
-                    console.log(`🔑 Extracted header as env var: ${envVarName}`);
+
                 }
             });
         }
@@ -367,7 +372,7 @@ const server = http.createServer((req, res) => {
                         if (payload.code) {
                             try {
                                 payload.code = decrypt(payload.code);
-                                console.log('🔓 Code decrypted successfully');
+
                             } catch (decryptError) {
                                 console.error('❌ Failed to decrypt code:', decryptError.message);
                                 res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -394,7 +399,7 @@ const server = http.createServer((req, res) => {
                 // }
 
                 if (payload.code) {
-                    console.log(payload.code);
+
                     // Enhanced code execution with async support
                     console.log(payload)
                     executeCodeWithAsyncSupport(payload, res, headerEnvVars);
@@ -459,7 +464,7 @@ async function executeCodeWithAsyncSupport(payload, res, headerEnvVars = {}) {
 })().then(() => {
     // Give a moment for any final logs
     setTimeout(() => {
-        console.log('\\n--- 🏁 Execution completed ---');
+
         process.exit(0);
     }, 200);
 }).catch(error => {
@@ -525,7 +530,7 @@ process.on('uncaughtException', (error) => {
         if (headerEnvVars && typeof headerEnvVars === 'object') {
             Object.keys(headerEnvVars).forEach(key => {
                 limitedEnv[key] = headerEnvVars[key];
-                console.log(`🔑 Added header env var: ${key}`);
+
             });
         }
         
@@ -594,7 +599,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                         encrypted: true,
                         data: encryptedTimeout
                     };
-                    console.log('🔒 Timeout response encrypted successfully');
+
                 } catch (encryptError) {
                     console.error('❌ Failed to encrypt timeout response:', encryptError.message);
                     // Fall back to unencrypted timeout response with error indication
@@ -665,7 +670,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                         encrypted: true,
                         data: encryptedResponse
                     };
-                    console.log('🔒 Response encrypted successfully');
+
                 } catch (encryptError) {
                     console.error('❌ Failed to encrypt response:', encryptError.message);
                     // Fall back to unencrypted response with error indication
@@ -708,7 +713,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                         encrypted: true,
                         data: encryptedError
                     };
-                    console.log('🔒 Error response encrypted successfully');
+
                 } catch (encryptError) {
                     console.error('❌ Failed to encrypt error response:', encryptError.message);
                     // Fall back to unencrypted error response with error indication
@@ -729,8 +734,8 @@ function executeProcess(cmd, args, res, cleanup = null) {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📍 Server available at: http://localhost:${PORT}`);
+
+
     
     // 🎯 KEY: Start Ollama setup ONLY after server is confirmed running
  

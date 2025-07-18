@@ -35,7 +35,7 @@ async function createProject(config) {
             fs.writeFileSync(filePath, file.code);
         }
 
-        console.log(`Project "${config.title}" has been created successfully at ${baseDir}`);
+
         return
     } catch (error) {
         console.error('Error creating project:', error);
