@@ -329,6 +329,21 @@ const server = http.createServer((req, res) => {
     } else if(req.method === 'POST' && req.url === '/execute') {
         let body = '';
 
+        // Extract KEYBOARD_PROVIDER_USER_TOKEN_FOR_* headers
+        const headerEnvVars = {};
+        if (req.headers) {
+            Object.keys(req.headers).forEach(headerName => {
+                // Convert header name to uppercase and replace hyphens with underscores
+                const envVarName = headerName.toUpperCase().replace(/-/g, '_');
+                
+                // Check if this is a KEYBOARD_PROVIDER_USER_TOKEN_FOR_ header
+                if (envVarName.startsWith('KEYBOARD_PROVIDER_USER_TOKEN_FOR_')) {
+                    headerEnvVars[envVarName] = req.headers[headerName];
+                    console.log(`🔑 Extracted header as env var: ${envVarName}`);
+                }
+            });
+        }
+
         req.on('data', chunk => {
             body += chunk.toString();
         });
@@ -382,7 +397,7 @@ const server = http.createServer((req, res) => {
                     console.log(payload.code);
                     // Enhanced code execution with async support
                     console.log(payload)
-                    executeCodeWithAsyncSupport(payload, res);
+                    executeCodeWithAsyncSupport(payload, res, headerEnvVars);
                 } else if (payload.command) {
                     // Handle command execution
                     const [cmd, ...args] = payload.command.split(' ');
@@ -403,7 +418,7 @@ const server = http.createServer((req, res) => {
 });
 
 // Enhanced code execution function with better async support
-async function executeCodeWithAsyncSupport(payload, res) {
+async function executeCodeWithAsyncSupport(payload, res, headerEnvVars = {}) {
     const tempFile = `temp_${Date.now()}.js`;
     let codeToExecute = payload.code;
     
@@ -505,6 +520,14 @@ process.on('uncaughtException', (error) => {
                 limitedEnv[key] = process.env[key];
             }
         });
+
+        // Add extracted headers as environment variables
+        if (headerEnvVars && typeof headerEnvVars === 'object') {
+            Object.keys(headerEnvVars).forEach(key => {
+                limitedEnv[key] = headerEnvVars[key];
+                console.log(`🔑 Added header env var: ${key}`);
+            });
+        }
         
         // Enhanced execution with timeout
         executeProcessWithTimeout('node', [tempFile], res, () => {
