@@ -5,6 +5,7 @@ const path = require('path');
 const { randomBytes, createCipheriv, createDecipheriv } = require('crypto');
 // const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
+const { obfuscateSensitiveData } = require('./src/obfuscate');
 
 // Encryption utilities
 const ALGORITHM = 'aes-256-cbc';
@@ -585,8 +586,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             let timeoutResult = { 
                 error: 'Execution timeout',
                 timeout: timeout,
-                stdout: stdout,
-                stderr: stderr,
+                stdout: obfuscateSensitiveData(stdout),
+                stderr: obfuscateSensitiveData(stderr),
                 message: `Process timed out after ${timeout}ms. Consider increasing timeout or optimizing async operations.`
             };
             
@@ -634,9 +635,9 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 let outputsOfCodeExecution = `
                 output of code execution: 
 
-                <stdout>${stdout}</stdout>
+                <stdout>${obfuscateSensitiveData(stdout)}</stdout>
                 
-                <stderr>${stderr}</stderr>`
+                <stderr>${obfuscateSensitiveData(stderr)}</stderr>`
                 let result = await localLLM.analyzeResponse(JSON.stringify(outputsOfCodeExecution))
                 console.log("this is the result", result)
                 aiAnalysis = result
@@ -652,8 +653,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                finalResult = { 
                 success: true,
                 data: {
-                    stdout, 
-                    stderr, 
+                    stdout: obfuscateSensitiveData(stdout), 
+                    stderr: obfuscateSensitiveData(stderr), 
                     code,
                     aiAnalysis,
                     executionTime: Date.now() // Add execution timestamp
@@ -699,8 +700,8 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                     message: error.message,
                     type: error.constructor.name,
                     code: error.code,
-                    stdout: stdout,
-                    stderr: stderr
+                    stdout: obfuscateSensitiveData(stdout),
+                    stderr: obfuscateSensitiveData(stderr)
                 }
             };
             
