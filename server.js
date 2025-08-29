@@ -747,6 +747,10 @@ function executeProcess(cmd, args, res, cleanup = null) {
 }
 
 const PORT = process.env.PORT || 3000;
+
+server.timeout = 600000; // 10 minutes in milliseconds
+server.headersTimeout = 610000; // Slightly longer than server timeout
+server.keepAliveTimeout = 605000; // Keep-alive timeout
 server.listen(PORT, () => {
 
 
