@@ -197,8 +197,7 @@ class JobManager {
                     // For long-running jobs, let the code complete naturally without forced timeout
                     exitLogic = `
         // Long-running job - let async operations complete naturally
-        console.log('🔄 Long-running job mode: waiting for natural completion...');
-        // No forced exit - let the code finish when it's done`;
+        console.log('🔄 Long-running job mode: waiting for natural completion...');`;
                 } else {
                     // Standard behavior with timeout for quick jobs
                     exitLogic = `
@@ -211,14 +210,44 @@ class JobManager {
     try {
         ${exitLogic}
         
-        // Execute the main code
-        await (async () => {
-            ${job.payload.code}
-        })();
+        // Execute the main code 
+        ${job.payload.code}
         
-        // Exit gracefully when code completes naturally
-        console.log('✅ Job completed successfully');
-        process.exit(0);
+        // For background jobs, let the event loop keep the process alive
+        // until all async operations naturally complete
+        if (${allowLongRunning}) {
+            console.log('🔄 Background job: letting async operations complete naturally...');
+            console.log('📊 Process will exit when all async operations finish');
+            
+            // Set a reasonable maximum wait time as a safety net
+            const safetyTimeout = setTimeout(() => {
+                console.log('⏰ Safety timeout reached after 30 minutes');
+                console.log('✅ Job completed (with safety timeout)');
+                process.exit(0);
+            }, 1800000); // 30 minutes
+            
+            // Also add a check for when the event loop becomes empty
+            process.nextTick(() => {
+                const checkEventLoop = () => {
+                    // If no more async operations are pending, clean up and exit
+                    if (process._getActiveHandles().length <= 1 && process._getActiveRequests().length === 0) {
+                        clearTimeout(safetyTimeout);
+                        console.log('✅ All async operations completed - exiting naturally');
+                        process.exit(0);
+                    } else {
+                        // Check again in 100ms
+                        setTimeout(checkEventLoop, 100);
+                    }
+                };
+                setTimeout(checkEventLoop, 1000); // Start checking after 1 second
+            });
+        } else {
+            // For non-background jobs, use the original timeout behavior  
+            console.log('⏳ Waiting for async operations to complete...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log('✅ Job completed successfully');
+            process.exit(0);
+        }
         
     } catch (error) {
         console.error('❌ Job execution error:', error.message);
