@@ -194,13 +194,18 @@ class JobManager {
                 codeToExecute = `
 (async () => {
     try {
-        console.log('🔄 Background job executing - waiting for natural completion...');
+        console.log('🔄 Background job executing - running async operations...');
         
-        // Execute the main code 
-        ${job.payload.code}
+        // Wrap user code to capture any returned promises
+        const __jobResult = await (async () => {
+            ${job.payload.code}
+        })();
         
-        console.log('📊 Letting async operations complete naturally...');
-        console.log('📊 Process will exit when all async operations finish');
+        console.log('📊 Async operations completed successfully');
+        console.log('✅ Job finished - process will now exit');
+        
+        // Exit cleanly after async operations complete
+        process.exit(0);
         
         // Set a reasonable maximum wait time as a safety net (30 minutes)
         setTimeout(() => {
