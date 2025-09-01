@@ -1,0 +1,79 @@
+{
+  "724e286191111e851c639529c01d958a": {
+    "id": "724e286191111e851c639529c01d958a",
+    "status": "COMPLETED",
+    "payload": {
+      "code": "console.log('Hello from background job!'); console.log('Current time:', new Date().toISOString()); setTimeout(() => { console.log('Job completed after delay'); }, 2000);",
+      "headerEnvVars": {}
+    },
+    "options": {
+      "priority": "normal",
+      "timeout": 600000,
+      "maxRetries": 0
+    },
+    "createdAt": "2025-08-31T19:26:31.459Z",
+    "updatedAt": "2025-08-31T19:26:36.698Z",
+    "startedAt": "2025-08-31T19:26:31.460Z",
+    "completedAt": "2025-08-31T19:26:36.698Z",
+    "result": {
+      "stdout": "Hello from background job!\nCurrent time: 2025-08-31T19:26:31.490Z\nJob completed after delay\n",
+      "stderr": "",
+      "code": 0,
+      "executionTime": 1756668396698
+    },
+    "error": null,
+    "progress": 0
+  },
+  "ac8cbc39d5845b4445fab2ff86af6a72": {
+    "id": "ac8cbc39d5845b4445fab2ff86af6a72",
+    "status": "COMPLETED",
+    "payload": {
+      "code": "console.log('Testing background execution via /execute endpoint'); for(let i = 0; i < 5; i++) { console.log('Iteration:', i); } console.log('Done!');",
+      "background": true,
+      "headerEnvVars": {}
+    },
+    "options": {
+      "priority": "normal",
+      "timeout": 600000,
+      "maxRetries": 0
+    },
+    "createdAt": "2025-08-31T19:28:23.651Z",
+    "updatedAt": "2025-08-31T19:28:23.680Z",
+    "startedAt": "2025-08-31T19:28:23.652Z",
+    "completedAt": "2025-08-31T19:28:23.680Z",
+    "result": {
+      "stdout": "Testing background execution via /execute endpoint\nIteration: 0\nIteration: 1\nIteration: 2\nIteration: 3\nIteration: 4\nDone!\n",
+      "stderr": "",
+      "code": 0,
+      "executionTime": 1756668503680
+    },
+    "error": null,
+    "progress": 0
+  },
+  "dff4314de89a19fcc27dcbfec90a0a19": {
+    "id": "dff4314de89a19fcc27dcbfec90a0a19",
+    "status": "COMPLETED",
+    "payload": {
+      "code": "console.log('Testing persistence job'); setTimeout(() => { console.log('Job will persist across restarts'); }, 30000);",
+      "timeout": 35000,
+      "headerEnvVars": {}
+    },
+    "options": {
+      "priority": "normal",
+      "timeout": 35000,
+      "maxRetries": 0
+    },
+    "createdAt": "2025-08-31T19:30:27.196Z",
+    "updatedAt": "2025-08-31T19:30:32.430Z",
+    "startedAt": "2025-08-31T19:30:27.197Z",
+    "completedAt": "2025-08-31T19:30:32.430Z",
+    "result": {
+      "stdout": "Testing persistence job\n",
+      "stderr": "",
+      "code": 0,
+      "executionTime": 1756668632430
+    },
+    "error": null,
+    "progress": 0
+  }
+}
