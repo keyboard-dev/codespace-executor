@@ -189,65 +189,25 @@ class JobManager {
                                      codeToExecute.includes('fetch(');
             
             if (needsAsyncWrapper) {
-                const allowLongRunning = job.payload.allowLongRunning || job.payload.use_background_jobs;
-                const asyncTimeout = job.payload.asyncTimeout || (allowLongRunning ? 0 : 5000);
-                
-                let exitLogic;
-                if (allowLongRunning || asyncTimeout === 0) {
-                    // For long-running jobs, let the code complete naturally without forced timeout
-                    exitLogic = `
-        // Long-running job - let async operations complete naturally
-        console.log('🔄 Long-running job mode: waiting for natural completion...');`;
-                } else {
-                    // Standard behavior with timeout for quick jobs
-                    exitLogic = `
-        // Wait for any pending async operations
-        await new Promise(resolve => setTimeout(resolve, ${asyncTimeout}));`;
-                }
-                
+                // JobManager always assumes long-running behavior
+                // No need for complex conditional logic - this is a background job system
                 codeToExecute = `
 (async () => {
     try {
-        ${exitLogic}
+        console.log('🔄 Background job executing - waiting for natural completion...');
         
         // Execute the main code 
         ${job.payload.code}
         
-        // For background jobs, let the event loop keep the process alive
-        // until all async operations naturally complete
-        if (${allowLongRunning}) {
-            console.log('🔄 Background job: letting async operations complete naturally...');
-            console.log('📊 Process will exit when all async operations finish');
-            
-            // Set a reasonable maximum wait time as a safety net
-            const safetyTimeout = setTimeout(() => {
-                console.log('⏰ Safety timeout reached after 30 minutes');
-                console.log('✅ Job completed (with safety timeout)');
-                process.exit(0);
-            }, 1800000); // 30 minutes
-            
-            // Also add a check for when the event loop becomes empty
-            process.nextTick(() => {
-                const checkEventLoop = () => {
-                    // If no more async operations are pending, clean up and exit
-                    if (process._getActiveHandles().length <= 1 && process._getActiveRequests().length === 0) {
-                        clearTimeout(safetyTimeout);
-                        console.log('✅ All async operations completed - exiting naturally');
-                        process.exit(0);
-                    } else {
-                        // Check again in 100ms
-                        setTimeout(checkEventLoop, 100);
-                    }
-                };
-                setTimeout(checkEventLoop, 1000); // Start checking after 1 second
-            });
-        } else {
-            // For non-background jobs, use the original timeout behavior  
-            console.log('⏳ Waiting for async operations to complete...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            console.log('✅ Job completed successfully');
+        console.log('📊 Letting async operations complete naturally...');
+        console.log('📊 Process will exit when all async operations finish');
+        
+        // Set a reasonable maximum wait time as a safety net (30 minutes)
+        setTimeout(() => {
+            console.log('⏰ Safety timeout reached after 30 minutes');
+            console.log('✅ Job completed (with safety timeout)');
             process.exit(0);
-        }
+        }, 1800000);
         
     } catch (error) {
         console.error('❌ Job execution error:', error.message);
@@ -303,10 +263,8 @@ process.on('uncaughtException', (error) => {
             
             let stdout = '';
             let stderr = '';
-            // Support maxDuration and longer timeouts for background jobs
-            const allowLongRunning = job.payload.allowLongRunning || job.payload.use_background_jobs;
-            const defaultTimeout = allowLongRunning ? 1800000 : 600000; // 30 minutes for background jobs, 10 minutes for others
-            const timeout = job.payload.maxDuration || job.payload.timeout || defaultTimeout;
+            // JobManager always uses long timeouts since it's for background jobs
+            const timeout = job.payload.maxDuration || job.payload.timeout || 1800000; // 30 minutes default
             
             const timeoutId = setTimeout(() => {
                 if (this.workers.has(job.id)) {
