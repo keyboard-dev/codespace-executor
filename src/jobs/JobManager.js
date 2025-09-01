@@ -189,14 +189,36 @@ class JobManager {
                                      codeToExecute.includes('fetch(');
             
             if (needsAsyncWrapper) {
-                const asyncTimeout = job.payload.asyncTimeout || 5000;
+                const allowLongRunning = job.payload.allowLongRunning || job.payload.use_background_jobs;
+                const asyncTimeout = job.payload.asyncTimeout || (allowLongRunning ? 0 : 5000);
+                
+                let exitLogic;
+                if (allowLongRunning || asyncTimeout === 0) {
+                    // For long-running jobs, let the code complete naturally without forced timeout
+                    exitLogic = `
+        // Long-running job - let async operations complete naturally
+        console.log('🔄 Long-running job mode: waiting for natural completion...');
+        // No forced exit - let the code finish when it's done`;
+                } else {
+                    // Standard behavior with timeout for quick jobs
+                    exitLogic = `
+        // Wait for any pending async operations
+        await new Promise(resolve => setTimeout(resolve, ${asyncTimeout}));`;
+                }
+                
                 codeToExecute = `
 (async () => {
     try {
-        ${job.payload.code}
+        ${exitLogic}
         
-        // Wait for any pending async operations
-        await new Promise(resolve => setTimeout(resolve, ${asyncTimeout}));
+        // Execute the main code
+        await (async () => {
+            ${job.payload.code}
+        })();
+        
+        // Exit gracefully when code completes naturally
+        console.log('✅ Job completed successfully');
+        process.exit(0);
         
     } catch (error) {
         console.error('❌ Job execution error:', error.message);
@@ -204,11 +226,7 @@ class JobManager {
         console.error('❌ Stack trace:', error.stack);
         process.exit(1);
     }
-})().then(() => {
-    setTimeout(() => {
-        process.exit(0);
-    }, 200);
-}).catch(error => {
+})().catch(error => {
     console.error('❌ Promise rejection:', error.message);
     process.exit(1);
 });
@@ -256,7 +274,10 @@ process.on('uncaughtException', (error) => {
             
             let stdout = '';
             let stderr = '';
-            const timeout = job.payload.timeout || 600000; // 10 minutes default for background jobs
+            // Support maxDuration and longer timeouts for background jobs
+            const allowLongRunning = job.payload.allowLongRunning || job.payload.use_background_jobs;
+            const defaultTimeout = allowLongRunning ? 1800000 : 600000; // 30 minutes for background jobs, 10 minutes for others
+            const timeout = job.payload.maxDuration || job.payload.timeout || defaultTimeout;
             
             const timeoutId = setTimeout(() => {
                 if (this.workers.has(job.id)) {
@@ -273,7 +294,19 @@ process.on('uncaughtException', (error) => {
             }, timeout);
             
             child.stdout.on('data', data => {
-                stdout += data.toString();
+                const output = data.toString();
+                stdout += output;
+                
+                // Look for progress indicators in the output
+                const lines = output.split('\n');
+                for (const line of lines) {
+                    // Look for progress patterns like "Progress: 50%" or "📊 Progress: 50%"
+                    const progressMatch = line.match(/(?:Progress:\s*|📊\s*Progress:\s*)(\d+)%/i);
+                    if (progressMatch) {
+                        const progress = parseInt(progressMatch[1]);
+                        this.updateJobProgress(job.id, progress, line.trim());
+                    }
+                }
             });
             
             child.stderr.on('data', data => {

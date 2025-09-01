@@ -102,7 +102,7 @@ router.post('/', (req, res) => {
         
         const jobOptions = {
             priority: payload.priority || 'normal',
-            timeout: payload.timeout || 600000, // 10 minutes default for background jobs
+            timeout: payload.timeout || (payload.use_background_jobs ? 1800000 : 600000), // 30 minutes for background jobs
             maxRetries: payload.maxRetries || 0
         };
         
