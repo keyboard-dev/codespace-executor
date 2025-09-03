@@ -2,6 +2,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const url = require('url');
 // const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
 const { encrypt, decrypt, safeObfuscate } = require('./src/utils/crypto');
@@ -68,12 +69,109 @@ function startOllamaSetupInBackground() {
 }
 
 const server = http.createServer((req, res) => {
-    if (req.url === '/') {
-        if (req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'text/plain' });
-            res.end('Hello World');
+    // Parse URL for better routing
+    const parsedUrl = url.parse(req.url, true);
+    const pathname = parsedUrl.pathname;
+
+    // Serve index.html at root
+    if (pathname === '/' && req.method === 'GET') {
+        const indexPath = path.join(__dirname, 'index.html');
+        fs.readFile(indexPath, (err, data) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.end('Error loading index.html');
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(data);
+            }
+        });
+    }
+    // API endpoint to list files in shareable_assets directory
+    else if (pathname === '/files' && req.method === 'GET') {
+        const assetsDir = path.join(__dirname, 'shareable_assets');
+        
+        fs.readdir(assetsDir, { withFileTypes: true }, (err, entries) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to read directory', details: err.message }));
+                return;
+            }
+
+            // Filter only files (not directories) and get their stats
+            const filePromises = entries
+                .filter(entry => entry.isFile())
+                .map(entry => {
+                    const filePath = path.join(assetsDir, entry.name);
+                    return new Promise((resolve) => {
+                        fs.stat(filePath, (err, stats) => {
+                            if (err) {
+                                resolve(null);
+                            } else {
+                                resolve({
+                                    name: entry.name,
+                                    size: stats.size,
+                                    modified: stats.mtime,
+                                    created: stats.birthtime
+                                });
+                            }
+                        });
+                    });
+                });
+
+            Promise.all(filePromises).then(files => {
+                const validFiles = files.filter(f => f !== null);
+                res.writeHead(200, { 
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                });
+                res.end(JSON.stringify({ files: validFiles }));
+            });
+        });
+    }
+    // Serve static files from shareable_assets directory
+    else if (pathname.startsWith('/shareable_assets/') && req.method === 'GET') {
+        const fileName = pathname.slice('/shareable_assets/'.length);
+        const filePath = path.join(__dirname, 'shareable_assets', fileName);
+
+        // Security check to prevent directory traversal
+        if (!filePath.startsWith(path.join(__dirname, 'shareable_assets'))) {
+            res.writeHead(403, { 'Content-Type': 'text/plain' });
+            res.end('Forbidden');
+            return;
         }
-    } else if (req.method === 'POST' && req.url === '/local-llm/initialize') {
+
+        fs.readFile(filePath, (err, data) => {
+            if (err) {
+                res.writeHead(404, { 'Content-Type': 'text/plain' });
+                res.end('File not found');
+            } else {
+                // Determine content type
+                const ext = path.extname(fileName).toLowerCase();
+                const contentTypes = {
+                    '.html': 'text/html',
+                    '.css': 'text/css',
+                    '.js': 'application/javascript',
+                    '.json': 'application/json',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.svg': 'image/svg+xml',
+                    '.pdf': 'application/pdf',
+                    '.txt': 'text/plain',
+                    '.md': 'text/markdown'
+                };
+                const contentType = contentTypes[ext] || 'application/octet-stream';
+                
+                res.writeHead(200, { 
+                    'Content-Type': contentType,
+                    'Content-Disposition': `inline; filename="${fileName}"`
+                });
+                res.end(data);
+            }
+        });
+    }
+    else if (req.method === 'POST' && req.url === '/local-llm/initialize') {
         // Initialize Local LLM (start Ollama and ensure model is ready)
         (async () => {
             try {

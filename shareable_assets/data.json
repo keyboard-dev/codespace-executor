@@ -1,0 +1,15 @@
+{
+  "name": "Sample JSON Data",
+  "version": "1.0.0",
+  "description": "This is a sample JSON file for testing",
+  "features": [
+    "File browsing",
+    "Download support",
+    "Multiple file types"
+  ],
+  "metadata": {
+    "created": "2025-09-03",
+    "author": "Test User",
+    "purpose": "Testing file explorer functionality"
+  }
+}
