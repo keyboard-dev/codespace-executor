@@ -1,5 +1,12 @@
 {
     "postCreateCommand": "npm install",
     "postStartCommand": "npm run start",
-    "forwardPorts": [3000, 3001, 11434]
+    "forwardPorts": [3000, 3001, 11434],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "anthropic.claude-code"
+            ]
+        }
+    }
 }
