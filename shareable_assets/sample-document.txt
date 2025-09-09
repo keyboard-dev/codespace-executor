@@ -1,0 +1,13 @@
+Sample Document
+===============
+
+This is a sample text document for testing the file explorer.
+It contains multiple lines of text to demonstrate file viewing capabilities.
+
+Features:
+- Browse files
+- Download files
+- View file details
+- Search functionality
+
+Created for testing purposes.

@@ -2,90 +2,29 @@ const http = require('http');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { randomBytes, createCipheriv, createDecipheriv } = require('crypto');
+const url = require('url');
 // const { createProject } = require('./src/project-generator/create');
 const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
-const { obfuscateSensitiveData } = require('./src/obfuscate');
-
-// Safe wrapper for obfuscation that never throws
-function safeObfuscate(data, fallbackMessage = '[OBFUSCATION_FAILED]') {
-    try {
-        return obfuscateSensitiveData(data);
-    } catch (error) {
-        console.error('❌ Obfuscation failed:', error.message);
-        // Return original data with a warning, or fallback message for safety
-        return typeof data === 'string' ? 
-            `${fallbackMessage}: ${data}` : 
-            `${fallbackMessage}: ${String(data)}`;
-    }
-}
-
-// Encryption utilities
-const ALGORITHM = 'aes-256-cbc';
-
-function getEncryptionKey() {
-    const key = process.env.KB_ENCRYPTION_SECRET;
-    if (!key) {
-        throw new Error('KB_ENCRYPTION_SECRET environment variable is required for encryption');
-    }
-    // If key is hex string, convert to buffer, otherwise use as is and pad/truncate to 32 bytes
-    if (key.length === 64 && /^[0-9a-fA-F]+$/.test(key)) {
-        return Buffer.from(key, 'hex');
-    } else {
-        // Convert string to buffer and ensure it's 32 bytes
-        const buffer = Buffer.from(key, 'utf8');
-        if (buffer.length === 32) {
-            return buffer;
-        } else if (buffer.length < 32) {
-            // Pad with zeros
-            return Buffer.concat([buffer, Buffer.alloc(32 - buffer.length)]);
-        } else {
-            // Truncate to 32 bytes
-            return buffer.slice(0, 32);
-        }
-    }
-}
-
-function encrypt(text) {
-    try {
-        const encryptionKey = getEncryptionKey();
-        const iv = randomBytes(16);
-        const cipher = createCipheriv(ALGORITHM, encryptionKey, iv);
-        let encrypted = cipher.update(text, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
-        const ivString = iv.toString('hex');
-        return ivString + ':' + encrypted;
-    } catch (error) {
-        console.error('Encryption error:', error);
-        throw new Error('Failed to encrypt data');
-    }
-}
-
-function decrypt(encryptedText) {
-    try {
-        const encryptionKey = getEncryptionKey();
-        const [ivHex, encrypted] = encryptedText.split(':');
-        
-        if (!ivHex || !encrypted) {
-            throw new Error('Invalid encrypted data format');
-        }
-        
-        const iv = Buffer.from(ivHex, 'hex');
-        const decipher = createDecipheriv(ALGORITHM, encryptionKey, iv);
-        
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        
-        return decrypted;
-    } catch (error) {
-        console.error('Decryption error:', error);
-        throw new Error('Failed to decrypt data');
-    }
-}
+const { encrypt, decrypt, safeObfuscate } = require('./src/utils/crypto');
 
 // Local LLM integration
 const LocalLLM = require('./src/local_llm/local');
 const localLLM = new LocalLLM();
+
+// Job system integration
+const JobManager = require('./src/jobs/JobManager');
+let jobManager = null;
+
+function getJobManager() {
+    if (!jobManager) {
+        jobManager = new JobManager({
+            maxConcurrentJobs: process.env.MAX_CONCURRENT_JOBS || 5,
+            jobTTL: (process.env.JOB_TTL_HOURS || 24) * 60 * 60 * 1000,
+            enablePersistence: process.env.DISABLE_JOB_PERSISTENCE !== 'true'
+        });
+    }
+    return jobManager;
+}
 
 // Legacy Ollama integration (keeping for backward compatibility)
 let ollamaClient = null;
@@ -130,12 +69,109 @@ function startOllamaSetupInBackground() {
 }
 
 const server = http.createServer((req, res) => {
-    if (req.url === '/') {
-        if (req.method === 'GET') {
-            res.writeHead(200, { 'Content-Type': 'text/plain' });
-            res.end('Hello World');
+    // Parse URL for better routing
+    const parsedUrl = url.parse(req.url, true);
+    const pathname = parsedUrl.pathname;
+
+    // Serve index.html at root
+    if (pathname === '/' && req.method === 'GET') {
+        const indexPath = path.join(__dirname, 'index.html');
+        fs.readFile(indexPath, (err, data) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.end('Error loading index.html');
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(data);
+            }
+        });
+    }
+    // API endpoint to list files in shareable_assets directory
+    else if (pathname === '/files' && req.method === 'GET') {
+        const assetsDir = path.join(__dirname, 'shareable_assets');
+        
+        fs.readdir(assetsDir, { withFileTypes: true }, (err, entries) => {
+            if (err) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to read directory', details: err.message }));
+                return;
+            }
+
+            // Filter only files (not directories) and get their stats
+            const filePromises = entries
+                .filter(entry => entry.isFile())
+                .map(entry => {
+                    const filePath = path.join(assetsDir, entry.name);
+                    return new Promise((resolve) => {
+                        fs.stat(filePath, (err, stats) => {
+                            if (err) {
+                                resolve(null);
+                            } else {
+                                resolve({
+                                    name: entry.name,
+                                    size: stats.size,
+                                    modified: stats.mtime,
+                                    created: stats.birthtime
+                                });
+                            }
+                        });
+                    });
+                });
+
+            Promise.all(filePromises).then(files => {
+                const validFiles = files.filter(f => f !== null);
+                res.writeHead(200, { 
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                });
+                res.end(JSON.stringify({ files: validFiles }));
+            });
+        });
+    }
+    // Serve static files from shareable_assets directory
+    else if (pathname.startsWith('/shareable_assets/') && req.method === 'GET') {
+        const fileName = pathname.slice('/shareable_assets/'.length);
+        const filePath = path.join(__dirname, 'shareable_assets', fileName);
+
+        // Security check to prevent directory traversal
+        if (!filePath.startsWith(path.join(__dirname, 'shareable_assets'))) {
+            res.writeHead(403, { 'Content-Type': 'text/plain' });
+            res.end('Forbidden');
+            return;
         }
-    } else if (req.method === 'POST' && req.url === '/local-llm/initialize') {
+
+        fs.readFile(filePath, (err, data) => {
+            if (err) {
+                res.writeHead(404, { 'Content-Type': 'text/plain' });
+                res.end('File not found');
+            } else {
+                // Determine content type
+                const ext = path.extname(fileName).toLowerCase();
+                const contentTypes = {
+                    '.html': 'text/html',
+                    '.css': 'text/css',
+                    '.js': 'application/javascript',
+                    '.json': 'application/json',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.svg': 'image/svg+xml',
+                    '.pdf': 'application/pdf',
+                    '.txt': 'text/plain',
+                    '.md': 'text/markdown'
+                };
+                const contentType = contentTypes[ext] || 'application/octet-stream';
+                
+                res.writeHead(200, { 
+                    'Content-Type': contentType,
+                    'Content-Disposition': `inline; filename="${fileName}"`
+                });
+                res.end(data);
+            }
+        });
+    }
+    else if (req.method === 'POST' && req.url === '/local-llm/initialize') {
         // Initialize Local LLM (start Ollama and ensure model is ready)
         (async () => {
             try {
@@ -413,10 +449,60 @@ const server = http.createServer((req, res) => {
                 // }
 
                 if (payload.code) {
-
-                    // Enhanced code execution with async support
-                    console.log(payload)
-                    executeCodeWithAsyncSupport(payload, res, headerEnvVars);
+                    // Check if background execution is requested
+                    if (payload.background) {
+                        // Submit as background job
+                        try {
+                            const jobPayload = {
+                                ...payload,
+                                headerEnvVars
+                            };
+                            
+                            const jobOptions = {
+                                priority: payload.priority || 'normal',
+                                timeout: payload.timeout || 600000, // 10 minutes default for background jobs
+                                maxRetries: payload.maxRetries || 0
+                            };
+                            
+                            const jobId = getJobManager().createJob(jobPayload, jobOptions);
+                            
+                            let response = {
+                                success: true,
+                                background: true,
+                                jobId: jobId,
+                                status: 'PENDING',
+                                message: 'Job submitted for background execution'
+                            };
+                            
+                            if (payload.encrypt_messages) {
+                                try {
+                                    const responseString = JSON.stringify(response);
+                                    const encryptedResponse = encrypt(responseString);
+                                    response = {
+                                        encrypted: true,
+                                        data: encryptedResponse
+                                    };
+                                } catch (encryptError) {
+                                    response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                                }
+                            }
+                            
+                            res.writeHead(201, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify(response));
+                        } catch (error) {
+                            console.error('❌ Error creating background job:', error);
+                            res.writeHead(500, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({
+                                success: false,
+                                error: 'Failed to create background job',
+                                details: error.message
+                            }));
+                        }
+                    } else {
+                        // Enhanced code execution with async support (immediate execution)
+                        console.log(payload)
+                        executeCodeWithAsyncSupport(payload, res, headerEnvVars);
+                    }
                 } else if (payload.command) {
                     // Handle command execution
                     const [cmd, ...args] = payload.command.split(' ');
@@ -430,6 +516,351 @@ const server = http.createServer((req, res) => {
                 res.end(JSON.stringify({ error: 'Looks there was an error did you review or look at docs before executing this request?' }));
             }
         });
+    
+    // Job management endpoints
+    } else if (req.method === 'POST' && req.url === '/jobs') {
+        // Submit new background job
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk.toString();
+        });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                
+                // Validate required fields
+                if (!payload.code && !payload.command) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({
+                        error: 'Either code or command is required'
+                    }));
+                }
+                
+                // Handle encryption if encrypt_messages is true
+                if (payload.encrypt_messages) {
+                    try {
+                        if (!process.env.KB_ENCRYPTION_SECRET) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            return res.end(JSON.stringify({
+                                error: 'KB_ENCRYPTION_SECRET environment variable is required when encrypt_messages is true'
+                            }));
+                        }
+                        
+                        if (payload.code) {
+                            try {
+                                payload.code = decrypt(payload.code);
+                            } catch (decryptError) {
+                                res.writeHead(400, { 'Content-Type': 'application/json' });
+                                return res.end(JSON.stringify({
+                                    error: 'Failed to decrypt code',
+                                    details: decryptError.message
+                                }));
+                            }
+                        }
+                    } catch (encryptionError) {
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        return res.end(JSON.stringify({
+                            error: 'Encryption setup failed',
+                            details: encryptionError.message
+                        }));
+                    }
+                }
+                
+                // Extract headers for environment variables
+                const headerEnvVars = {};
+                if (req.headers) {
+                    Object.keys(req.headers).forEach(headerName => {
+                        if (headerName.toLowerCase().startsWith('x-keyboard-provider-user-token-for-')) {
+                            const envVarName = headerName
+                                .toLowerCase()
+                                .replace('x-', '')
+                                .toUpperCase()
+                                .replace(/-/g, '_');
+                            headerEnvVars[envVarName] = req.headers[headerName];
+                        }
+                    });
+                }
+                
+                // Prepare job payload
+                const jobPayload = {
+                    ...payload,
+                    headerEnvVars
+                };
+                
+                const jobOptions = {
+                    priority: payload.priority || 'normal',
+                    timeout: payload.timeout || 600000, // 10 minutes default for background jobs
+                    maxRetries: payload.maxRetries || 0
+                };
+                
+                const jobId = getJobManager().createJob(jobPayload, jobOptions);
+                
+                let response = {
+                    success: true,
+                    jobId: jobId,
+                    status: 'PENDING',
+                    message: 'Job submitted successfully'
+                };
+                
+                if (payload.encrypt_messages) {
+                    try {
+                        const responseString = JSON.stringify(response);
+                        const encryptedResponse = encrypt(responseString);
+                        response = {
+                            encrypted: true,
+                            data: encryptedResponse
+                        };
+                    } catch (encryptError) {
+                        response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                    }
+                }
+                
+                res.writeHead(201, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(response));
+                
+            } catch (error) {
+                console.error('❌ Error creating job:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: false,
+                    error: 'Failed to create job',
+                    details: error.message
+                }));
+            }
+        });
+    
+    } else if (req.method === 'GET' && req.url.startsWith('/jobs/')) {
+        // Get specific job status
+        const pathParts = req.url.split('/');
+        const jobId = pathParts[2]?.split('?')[0]; // Handle query params
+        
+        if (!jobId || jobId === 'stats') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'Job ID is required' }));
+        }
+        
+        try {
+            const url = new URL(req.url, `http://${req.headers.host}`);
+            const encryptMessages = url.searchParams.get('encrypt_messages') === 'true';
+            
+            const job = getJobManager().getJob(jobId);
+            
+            if (!job) {
+                let response = { error: 'Job not found' };
+                if (encryptMessages) {
+                    try {
+                        const responseString = JSON.stringify(response);
+                        const encryptedResponse = encrypt(responseString);
+                        response = {
+                            encrypted: true,
+                            data: encryptedResponse
+                        };
+                    } catch (encryptError) {
+                        response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                    }
+                }
+                
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify(response));
+            }
+            
+            // Create response with obfuscated sensitive data
+            const jobResponse = {
+                id: job.id,
+                status: job.status,
+                progress: job.progress,
+                progressMessage: job.progressMessage,
+                createdAt: job.createdAt,
+                updatedAt: job.updatedAt,
+                startedAt: job.startedAt,
+                completedAt: job.completedAt
+            };
+            
+            // Add results or error details based on status
+            if (job.status === 'COMPLETED' && job.result) {
+                jobResponse.result = {
+                    stdout: safeObfuscate(job.result.stdout),
+                    stderr: safeObfuscate(job.result.stderr),
+                    code: job.result.code,
+                    executionTime: job.result.executionTime,
+                    aiAnalysis: job.result.aiAnalysis
+                };
+            } else if (job.status === 'FAILED' && job.error) {
+                jobResponse.error = {
+                    message: job.error.message,
+                    type: job.error.type,
+                    code: job.error.code,
+                    stdout: safeObfuscate(job.error.stdout),
+                    stderr: safeObfuscate(job.error.stderr)
+                };
+            }
+            
+            let response = {
+                success: true,
+                job: jobResponse
+            };
+            
+            if (encryptMessages) {
+                try {
+                    const responseString = JSON.stringify(response);
+                    const encryptedResponse = encrypt(responseString);
+                    response = {
+                        encrypted: true,
+                        data: encryptedResponse
+                    };
+                } catch (encryptError) {
+                    response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                }
+            }
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response));
+            
+        } catch (error) {
+            console.error('❌ Error getting job:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Failed to get job',
+                details: error.message
+            }));
+        }
+    
+    } else if (req.method === 'GET' && req.url.startsWith('/jobs')) {
+        // List all jobs
+        try {
+            const url = new URL(req.url, `http://${req.headers.host}`);
+            const options = {
+                status: url.searchParams.get('status'),
+                limit: Math.min(parseInt(url.searchParams.get('limit')) || 100, 1000),
+                offset: parseInt(url.searchParams.get('offset')) || 0
+            };
+            const encryptMessages = url.searchParams.get('encrypt_messages') === 'true';
+            
+            const result = getJobManager().getAllJobs(options);
+            
+            // Obfuscate sensitive data in job list
+            const sanitizedJobs = result.jobs.map(job => ({
+                id: job.id,
+                status: job.status,
+                progress: job.progress,
+                progressMessage: job.progressMessage,
+                createdAt: job.createdAt,
+                updatedAt: job.updatedAt,
+                startedAt: job.startedAt,
+                completedAt: job.completedAt,
+                hasResults: job.status === 'COMPLETED' && !!job.result,
+                hasError: job.status === 'FAILED' && !!job.error
+            }));
+            
+            let response = {
+                success: true,
+                jobs: sanitizedJobs,
+                pagination: {
+                    total: result.total,
+                    limit: options.limit,
+                    offset: options.offset,
+                    hasMore: result.hasMore
+                }
+            };
+            
+            if (encryptMessages) {
+                try {
+                    const responseString = JSON.stringify(response);
+                    const encryptedResponse = encrypt(responseString);
+                    response = {
+                        encrypted: true,
+                        data: encryptedResponse
+                    };
+                } catch (encryptError) {
+                    response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                }
+            }
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response));
+            
+        } catch (error) {
+            console.error('❌ Error listing jobs:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Failed to list jobs',
+                details: error.message
+            }));
+        }
+    
+    } else if (req.method === 'DELETE' && req.url.startsWith('/jobs/')) {
+        // Cancel/delete specific job
+        const pathParts = req.url.split('/');
+        const jobId = pathParts[2];
+        
+        if (!jobId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'Job ID is required' }));
+        }
+        
+        try {
+            const job = getJobManager().getJob(jobId);
+            
+            if (!job) {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: 'Job not found' }));
+            }
+            
+            let result;
+            let message;
+            if (job.status === 'RUNNING' || job.status === 'PENDING') {
+                // Cancel the job
+                result = getJobManager().cancelJob(jobId);
+                message = 'Job cancelled successfully';
+            } else {
+                // Delete completed/failed job
+                getJobManager().deleteJob(jobId);
+                result = { id: jobId, deleted: true };
+                message = 'Job deleted successfully';
+            }
+            
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                message: message,
+                job: {
+                    id: result.id,
+                    status: result.status || 'DELETED'
+                }
+            }));
+            
+        } catch (error) {
+            console.error('❌ Error deleting job:', error);
+            const statusCode = error.message.includes('not found') ? 404 : 500;
+            res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: error.message.includes('not found') ? 'Job not found' : 'Failed to delete job',
+                details: error.message
+            }));
+        }
+    
+    } else if (req.method === 'GET' && req.url === '/jobs-stats') {
+        // Get job system statistics
+        try {
+            const stats = getJobManager().getStats();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                stats: stats
+            }));
+        } catch (error) {
+            console.error('❌ Error getting job stats:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Failed to get job statistics',
+                details: error.message
+            }));
+        }
+        
     } else {
         res.writeHead(404);
         res.end('Not found');
@@ -747,10 +1178,38 @@ function executeProcess(cmd, args, res, cleanup = null) {
 }
 
 const PORT = process.env.PORT || 3000;
+
+server.timeout = 600000; // 10 minutes in milliseconds
+server.headersTimeout = 610000; // Slightly longer than server timeout
+server.keepAliveTimeout = 605000; // Keep-alive timeout
 server.listen(PORT, () => {
-
-
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📋 Background job system initialized`);
     
     // 🎯 KEY: Start Ollama setup ONLY after server is confirmed running
- 
 });
+
+// Graceful shutdown handler
+function shutdown() {
+    console.log('🛑 Shutting down server...');
+    
+    // Shutdown job manager
+    if (jobManager) {
+        jobManager.shutdown();
+    }
+    
+    server.close(() => {
+        console.log('✅ Server shutdown complete');
+        process.exit(0);
+    });
+    
+    // Force exit after 30 seconds
+    setTimeout(() => {
+        console.error('❌ Forced shutdown after timeout');
+        process.exit(1);
+    }, 30000);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+process.on('SIGUSR2', shutdown); // Nodemon restart
