@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { randomBytes } = require('crypto');
+const SecureExecutor = require('../secure/SecureExecutor');
 
 class JobManager {
     constructor(options = {}) {
@@ -10,6 +11,10 @@ class JobManager {
         this.jobTTL = options.jobTTL || 24 * 60 * 60 * 1000; // 24 hours default
         this.persistenceFile = options.persistenceFile || path.join(__dirname, '../../data/jobs.json');
         this.enablePersistence = options.enablePersistence !== false;
+        this.secureExecutor = new SecureExecutor({
+            timeout: 1800000, // 30 minutes for background jobs
+            tempDir: path.join(__dirname, '../../temp/jobs')
+        });
         
         // Ensure data directory exists
         if (this.enablePersistence) {
@@ -169,229 +174,62 @@ class JobManager {
     }
 
     async startJobExecution(job) {
-        const { spawn } = require('child_process');
-        const fs = require('fs');
-        
         try {
             this.updateJobStatus(job.id, 'RUNNING');
-            
-            // Prepare code execution similar to existing executeCodeWithAsyncSupport
-            const tempFile = `temp_job_${job.id}_${Date.now()}.js`;
-            let codeToExecute = job.payload.code;
-            
-            // Check if code needs async wrapper (same logic as server.js)
-            const needsAsyncWrapper = codeToExecute.includes('await') || 
-                                     codeToExecute.includes('Promise') ||
-                                     codeToExecute.includes('.then(') ||
-                                     codeToExecute.includes('setTimeout') ||
-                                     codeToExecute.includes('setInterval') ||
-                                     codeToExecute.includes('https.request') ||
-                                     codeToExecute.includes('fetch(');
-            
-            if (needsAsyncWrapper) {
-                // JobManager always assumes long-running behavior
-                // No need for complex conditional logic - this is a background job system
-                codeToExecute = `
-(async () => {
-    try {
-        console.log('🔄 Background job executing - running async operations...');
-        
-        // Wrap user code to capture any returned promises
-        const __jobResult = await (async () => {
-            ${job.payload.code}
-        })();
-        
-        console.log('📊 Async operations completed successfully');
-        console.log('✅ Job finished - process will now exit');
-        
-        // Exit cleanly after async operations complete
-        process.exit(0);
-        
-        // Set a reasonable maximum wait time as a safety net (30 minutes)
-        setTimeout(() => {
-            console.log('⏰ Safety timeout reached after 30 minutes');
-            console.log('✅ Job completed (with safety timeout)');
-            process.exit(0);
-        }, 1800000);
-        
-    } catch (error) {
-        console.error('❌ Job execution error:', error.message);
-        console.error('❌ Error type:', error.constructor.name);
-        console.error('❌ Stack trace:', error.stack);
-        process.exit(1);
-    }
-})().catch(error => {
-    console.error('❌ Promise rejection:', error.message);
-    process.exit(1);
-});
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Promise Rejection:', reason);
-    process.exit(1);
-});
+            // Use SecureExecutor for background job execution
+            const result = await this.secureExecutor.executeCode(job.payload, job.payload.headerEnvVars || {});
 
-process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error.message);
-    process.exit(1);
-});
-`;
-            }
-            
-            fs.writeFileSync(tempFile, codeToExecute);
-            
-            // Prepare environment variables (same logic as server.js)
-            const allowedEnvVars = [
-                'PATH', 'HOME', 'USER', 'NODE_ENV', 'TZ', 'LANG', 'LC_ALL', 'PWD', 'TMPDIR', 'TEMP', 'TMP'
-            ];
-            
-            const limitedEnv = {};
-            allowedEnvVars.forEach(key => {
-                if (process.env[key]) {
-                    limitedEnv[key] = process.env[key];
+            // Handle successful execution
+            if (result.success) {
+                // Prepare result data with security filtering already applied
+                let jobResult = {
+                    stdout: result.data.stdout,
+                    stderr: result.data.stderr,
+                    code: result.data.code || 0,
+                    executionTime: result.data.executionTime || Date.now(),
+                    executionMode: result.data.executionMode,
+                    securityFiltered: result.data.securityFiltered
+                };
+
+                // Add AI analysis if available
+                if (result.data.aiAnalysis) {
+                    jobResult.aiAnalysis = result.data.aiAnalysis;
                 }
-            });
-            
-            // Add KEYBOARD environment variables
-            Object.keys(process.env).forEach(key => {
-                if (key.startsWith('KEYBOARD')) {
-                    limitedEnv[key] = process.env[key];
+
+                // Add code analysis info
+                if (result.data.codeAnalysis) {
+                    jobResult.codeAnalysis = result.data.codeAnalysis;
                 }
-            });
-            
-            // Add header environment variables if provided
-            if (job.payload.headerEnvVars) {
-                Object.assign(limitedEnv, job.payload.headerEnvVars);
-            }
-            
-            const child = spawn('node', [tempFile], { env: limitedEnv });
-            this.workers.set(job.id, child);
-            
-            let stdout = '';
-            let stderr = '';
-            // JobManager always uses long timeouts since it's for background jobs
-            const timeout = job.payload.maxDuration || job.payload.timeout || 1800000; // 30 minutes default
-            
-            const timeoutId = setTimeout(() => {
-                if (this.workers.has(job.id)) {
-                    child.kill('SIGTERM');
-                    this.updateJobStatus(job.id, 'FAILED', {
-                        error: {
-                            message: `Job timed out after ${timeout}ms`,
-                            type: 'TIMEOUT',
-                            stdout,
-                            stderr
-                        }
-                    });
-                }
-            }, timeout);
-            
-            child.stdout.on('data', data => {
-                const output = data.toString();
-                stdout += output;
-                
-                // Look for progress indicators in the output
-                const lines = output.split('\n');
-                for (const line of lines) {
-                    // Look for progress patterns like "Progress: 50%" or "📊 Progress: 50%"
-                    const progressMatch = line.match(/(?:Progress:\s*|📊\s*Progress:\s*)(\d+)%/i);
-                    if (progressMatch) {
-                        const progress = parseInt(progressMatch[1]);
-                        this.updateJobProgress(job.id, progress, line.trim());
-                    }
-                }
-            });
-            
-            child.stderr.on('data', data => {
-                stderr += data.toString();
-            });
-            
-            child.on('close', async (code) => {
-                clearTimeout(timeoutId);
-                this.workers.delete(job.id);
-                
-                try {
-                    fs.unlinkSync(tempFile);
-                } catch (e) {
-                    // File cleanup error, not critical
-                }
-                
-                if (code === 0) {
-                    // Success
-                    let result = {
-                        stdout,
-                        stderr,
-                        code,
-                        executionTime: Date.now()
-                    };
-                    
-                    // AI analysis if requested
-                    if (job.payload.ai_eval) {
-                        try {
-                            const LocalLLM = require('../local_llm/local');
-                            const localLLM = new LocalLLM();
-                            const outputsOfCodeExecution = `
-                            output of code execution: 
-                            <stdout>${stdout}</stdout>
-                            <stderr>${stderr}</stderr>`;
-                            result.aiAnalysis = await localLLM.analyzeResponse(JSON.stringify(outputsOfCodeExecution));
-                        } catch (e) {
-                            result.aiAnalysisError = e.message;
-                        }
-                    }
-                    
-                    this.updateJobStatus(job.id, 'COMPLETED', { result });
-                } else {
-                    // Failure
-                    this.updateJobStatus(job.id, 'FAILED', {
-                        error: {
-                            message: `Process exited with code ${code}`,
-                            type: 'PROCESS_EXIT',
-                            code,
-                            stdout,
-                            stderr
-                        }
-                    });
-                }
-                
-                // Try to process next job
-                this.processNextJob();
-            });
-            
-            child.on('error', (error) => {
-                clearTimeout(timeoutId);
-                this.workers.delete(job.id);
-                
-                try {
-                    fs.unlinkSync(tempFile);
-                } catch (e) {
-                    // File cleanup error, not critical
-                }
-                
+
+                this.updateJobStatus(job.id, 'COMPLETED', { result: jobResult });
+            } else {
+                // Handle execution failure
                 this.updateJobStatus(job.id, 'FAILED', {
                     error: {
-                        message: error.message,
-                        type: error.constructor.name,
-                        code: error.code,
-                        stdout,
-                        stderr
+                        message: result.error || 'Job execution failed',
+                        type: result.details || 'EXECUTION_ERROR',
+                        executionMode: result.executionMode || 'unknown',
+                        stdout: result.stdout || '',
+                        stderr: result.stderr || ''
                     }
                 });
-                
-                // Try to process next job
-                this.processNextJob();
-            });
-            
+            }
+
         } catch (error) {
+            console.error('❌ Job execution error:', error);
             this.updateJobStatus(job.id, 'FAILED', {
                 error: {
-                    message: error.message,
-                    type: error.constructor.name
+                    message: error.message || 'Unknown execution error',
+                    type: error.constructor.name,
+                    details: error.details,
+                    executionMode: error.executionMode || 'unknown'
                 }
             });
-            
-            // Try to process next job
-            this.processNextJob();
         }
+
+        // Always try to process next job
+        this.processNextJob();
     }
 
     cleanupExpiredJobs() {
