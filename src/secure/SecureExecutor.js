@@ -89,7 +89,12 @@ class SecureExecutor {
      * Execute code with security isolation if needed
      */
     async executeCode(payload, headerEnvVars = {}) {
-        // Check for new secure data methods payload structure
+        // Check for new secure data variables payload structure
+        if (payload.secure_data_variables && payload.Global_code) {
+            return this.executeSecureWithDataVariables(payload, headerEnvVars);
+        }
+
+        // Legacy support for old format
         if (payload.Secure_data_methods && payload.Global_code) {
             return this.executeSecureWithDataMethods(payload, headerEnvVars);
         }
@@ -114,7 +119,30 @@ class SecureExecutor {
     }
 
     /**
-     * Execute code with secure two-phase execution and isolated data methods
+     * Execute code with secure two-phase execution and isolated data variables (new format)
+     */
+    async executeSecureWithDataVariables(payload, headerEnvVars = {}) {
+        return new Promise(async (resolve, reject) => {
+            try {
+                // Phase 1: Execute secure data variables in isolation
+                const sanitizedDataVariables = await this.executeDataVariablesPhase(payload.secure_data_variables, headerEnvVars);
+
+                // Phase 2: Execute global code with access to sanitized data
+                const result = await this.executeGlobalCodePhase(payload.Global_code, sanitizedDataVariables, payload);
+
+                resolve(result);
+            } catch (error) {
+                reject({
+                    error: 'Secure execution with data variables failed',
+                    details: error.message,
+                    executionMode: 'secure-two-phase'
+                });
+            }
+        });
+    }
+
+    /**
+     * Execute code with secure two-phase execution and isolated data methods (legacy format)
      */
     async executeSecureWithDataMethods(payload, headerEnvVars = {}) {
         return new Promise(async (resolve, reject) => {
@@ -617,6 +645,53 @@ process.on('uncaughtException', (error) => {
     }
 
     /**
+     * Phase 1: Execute secure data variables in isolation with full credential access (new format)
+     */
+    async executeDataVariablesPhase(secureDataVariables, headerEnvVars = {}) {
+        // Security validation for data variables payload
+        this.validateSecureDataVariablesPayload(secureDataVariables);
+
+        const sanitizedDataVariables = {};
+
+        for (const [variableName, variableConfig] of Object.entries(secureDataVariables)) {
+            try {
+                // Check rate limits
+                if (!this.checkDataMethodRateLimit(variableName)) {
+                    sanitizedDataVariables[variableName] = {
+                        error: true,
+                        message: 'Rate limit exceeded for data variable',
+                        type: 'rate_limit_error'
+                    };
+                    continue;
+                }
+
+                // Validate variable configuration
+                this.validateDataVariableConfig(variableConfig);
+
+                // Execute the data variable in isolation
+                const rawResult = await this.executeIsolatedDataVariable(variableName, variableConfig, headerEnvVars);
+
+                // Sanitize the result (strip sensitive data)
+                sanitizedDataVariables[variableName] = this.sanitizeDataMethodResult(rawResult);
+
+                // Update rate limit tracking
+                this.updateDataMethodRateLimit(variableName);
+
+            } catch (error) {
+                // Create safe error message without exposing sensitive details
+                sanitizedDataVariables[variableName] = {
+                    error: true,
+                    message: 'Data variable execution failed',
+                    type: 'execution_error'
+                };
+                console.error(`❌ Data variable ${variableName} failed:`, error.message);
+            }
+        }
+
+        return sanitizedDataVariables;
+    }
+
+    /**
      * Validate the overall secure data methods payload for security
      */
     validateSecureDataMethodsPayload(secureDataMethods) {
@@ -682,6 +757,252 @@ process.on('uncaughtException', (error) => {
         const methodHistory = this.dataMethodRateLimit.get(methodName);
         methodHistory.push(now);
         this.dataMethodRateLimit.set(methodName, methodHistory);
+    }
+
+    /**
+     * Validate the overall secure data variables payload for security (new format)
+     */
+    validateSecureDataVariablesPayload(secureDataVariables) {
+        if (!secureDataVariables || typeof secureDataVariables !== 'object') {
+            throw new Error('secure_data_variables must be an object');
+        }
+
+        const variableNames = Object.keys(secureDataVariables);
+
+        // Limit number of data variables
+        if (variableNames.length > this.maxDataMethods) {
+            throw new Error(`Too many data variables. Maximum allowed: ${this.maxDataMethods}`);
+        }
+
+        // Validate variable names (no special characters, reasonable length)
+        variableNames.forEach(variableName => {
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(variableName)) {
+                throw new Error(`Invalid data variable name: ${variableName}`);
+            }
+
+            if (variableName.length > 50) {
+                throw new Error(`Data variable name too long: ${variableName}`);
+            }
+
+            // Prevent reserved JavaScript keywords/names
+            const reservedNames = ['constructor', 'prototype', '__proto__', 'eval', 'Function'];
+            if (reservedNames.includes(variableName)) {
+                throw new Error(`Reserved variable name not allowed: ${variableName}`);
+            }
+        });
+    }
+
+    /**
+     * Validate data variable configuration for security (new format)
+     */
+    validateDataVariableConfig(config) {
+        if (!config || typeof config !== 'object') {
+            throw new Error('Invalid data variable configuration');
+        }
+
+        // Validate fetchOptions if present
+        if (config.fetchOptions) {
+            if (typeof config.fetchOptions !== 'object') {
+                throw new Error('fetchOptions must be an object');
+            }
+
+            // Validate method
+            if (config.fetchOptions.method) {
+                const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+                if (!allowedMethods.includes(config.fetchOptions.method.toUpperCase())) {
+                    throw new Error('Invalid HTTP method');
+                }
+            }
+        }
+
+        // Validate headers
+        if (config.headers && typeof config.headers !== 'object') {
+            throw new Error('Headers must be an object');
+        }
+    }
+
+    /**
+     * Execute a single data variable in isolation with credential access (new format)
+     */
+    async executeIsolatedDataVariable(variableName, variableConfig, headerEnvVars) {
+        return new Promise((resolve, reject) => {
+            const tempFile = `temp_data_variable_${Date.now()}_${randomBytes(8).toString('hex')}.js`;
+            const tempPath = path.join(this.tempDir, tempFile);
+
+            // Create isolated execution code for the data variable
+            const isolatedCode = this.generateIsolatedDataVariableCode(variableName, variableConfig);
+
+            try {
+                fs.writeFileSync(tempPath, isolatedCode);
+
+                // Create environment for isolated execution with full credential access
+                const isolatedEnv = this.createIsolatedEnvironment(headerEnvVars);
+
+                this.executeProcess('node', [tempPath], {
+                    timeout: this.maxDataMethodTimeout, // Configurable timeout for data variable
+                    env: isolatedEnv,
+                    executionMode: 'isolated-data-variable'
+                }).then(result => {
+                    this.cleanup(tempPath);
+                    resolve(this.parseIsolatedDataMethodResult(result));
+                }).catch(error => {
+                    this.cleanup(tempPath);
+                    reject(error);
+                });
+
+            } catch (error) {
+                this.cleanup(tempPath);
+                reject(error);
+            }
+        });
+    }
+
+    /**
+     * Generate isolated execution code for a data variable (new format)
+     */
+    generateIsolatedDataVariableCode(variableName, variableConfig) {
+        // Resolve environment variables in configuration
+        const resolvedConfig = this.resolveEnvironmentVariables(variableConfig);
+
+        return `
+const https = require('https');
+const http = require('http');
+const { URL } = require('url');
+
+// Capture console output
+let capturedOutput = { stdout: '', stderr: '', data: null, error: null };
+
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+console.log = (...args) => {
+    const output = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+    capturedOutput.stdout += output + '\\n';
+    originalConsoleLog(...args);
+};
+
+console.error = (...args) => {
+    const output = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+    capturedOutput.stderr += output + '\\n';
+    originalConsoleError(...args);
+};
+
+async function executeDataVariable() {
+    try {
+        const config = ${JSON.stringify(resolvedConfig)};
+
+        // Prepare fetch options
+        const fetchOptions = config.fetchOptions || {};
+        const headers = config.headers || {};
+
+        // Default to GET if no method specified
+        const method = (fetchOptions.method || 'GET').toUpperCase();
+
+        // Extract URL (could be in various places)
+        const url = fetchOptions.url || config.url;
+        if (!url) {
+            throw new Error('No URL specified for data variable');
+        }
+
+        // Prepare request data
+        const requestData = {
+            method: method,
+            headers: headers
+        };
+
+        if (fetchOptions.body && method !== 'GET' && method !== 'HEAD') {
+            requestData.body = typeof fetchOptions.body === 'object' ?
+                JSON.stringify(fetchOptions.body) : fetchOptions.body;
+
+            if (!headers['Content-Type'] && typeof fetchOptions.body === 'object') {
+                requestData.headers['Content-Type'] = 'application/json';
+            }
+        }
+
+        // Make HTTP request using Node.js built-in modules
+        const result = await makeHttpRequest(url, requestData);
+
+        capturedOutput.data = {
+            status: result.status,
+            headers: result.headers,
+            body: result.body,
+            success: true
+        };
+
+    } catch (error) {
+        capturedOutput.error = {
+            message: error.message,
+            type: error.constructor.name
+        };
+    }
+
+    // Output the captured result
+    console.log('ISOLATED_DATA_METHOD_RESULT:', JSON.stringify(capturedOutput));
+    process.exit(0);
+}
+
+function makeHttpRequest(url, options) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = new URL(url);
+        const isHttps = parsedUrl.protocol === 'https:';
+        const client = isHttps ? https : http;
+
+        const reqOptions = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (isHttps ? 443 : 80),
+            path: parsedUrl.pathname + parsedUrl.search,
+            method: options.method,
+            headers: options.headers || {}
+        };
+
+        const req = client.request(reqOptions, (res) => {
+            let data = '';
+
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const body = data.length > 0 ? (
+                        res.headers['content-type']?.includes('application/json') ?
+                        JSON.parse(data) : data
+                    ) : null;
+
+                    resolve({
+                        status: res.statusCode,
+                        headers: res.headers,
+                        body: body
+                    });
+                } catch (parseError) {
+                    resolve({
+                        status: res.statusCode,
+                        headers: res.headers,
+                        body: data
+                    });
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(error);
+        });
+
+        // Write request body if present
+        if (options.body) {
+            req.write(options.body);
+        }
+
+        req.end();
+    });
+}
+
+// Execute the data variable
+executeDataVariable().catch(error => {
+    console.error('❌ Data variable execution failed:', error.message);
+    process.exit(1);
+});
+`;
     }
 
     /**

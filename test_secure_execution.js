@@ -54,11 +54,11 @@ const testCases = [
 ];
 
 // Test cases for new secure two-phase execution
-const secureDataMethodTestCases = [
+const secureDataVariableTestCases = [
     {
         name: 'Basic Two-Phase Execution with Mock API',
         payload: {
-            "Secure_data_methods": {
+            "secure_data_variables": {
                 "mockApiData": {
                     "fetchOptions": {
                         "url": "https://httpbin.org/json",
@@ -83,9 +83,9 @@ const secureDataMethodTestCases = [
         expected: 'Mock API test successful'
     },
     {
-        name: 'Two-Phase with Multiple Data Methods',
+        name: 'Two-Phase with Multiple Data Variables',
         payload: {
-            "Secure_data_methods": {
+            "secure_data_variables": {
                 "firstApi": {
                     "fetchOptions": {
                         "url": "https://httpbin.org/get",
@@ -103,20 +103,20 @@ const secureDataMethodTestCases = [
                 }
             },
             "Global_code": `
-                console.log("Testing multiple data methods...");
+                console.log("Testing multiple data variables...");
                 let first = await firstApi();
                 let second = await secondApi();
                 console.log("First API result type:", typeof first);
                 console.log("Second API result type:", typeof second);
-                console.log("Multiple data methods test complete");
+                console.log("Multiple data variables test complete");
             `
         },
-        expected: 'Multiple data methods test complete'
+        expected: 'Multiple data variables test complete'
     },
     {
         name: 'Two-Phase with Error Handling',
         payload: {
-            "Secure_data_methods": {
+            "secure_data_variables": {
                 "invalidApi": {
                     "fetchOptions": {
                         "url": "https://invalid-url-that-should-fail.example",
@@ -140,7 +140,7 @@ const secureDataMethodTestCases = [
     {
         name: 'Security Test - No Credential Leakage',
         payload: {
-            "Secure_data_methods": {
+            "secure_data_variables": {
                 "secureTest": {
                     "credential": "process.env.KEYBOARD_GOOGLE_TOKEN",
                     "fetchOptions": {
@@ -272,11 +272,11 @@ async function checkServerStatus() {
     }
 }
 
-async function testSecureDataMethods() {
-    console.log('\n🔐 Testing Secure Two-Phase Execution (Data Methods)');
+async function testSecureDataVariables() {
+    console.log('\n🔐 Testing Secure Two-Phase Execution (Data Variables)');
     console.log('='.repeat(60));
 
-    for (const testCase of secureDataMethodTestCases) {
+    for (const testCase of secureDataVariableTestCases) {
         console.log(`\n📋 Test: ${testCase.name}`);
 
         try {
@@ -286,11 +286,11 @@ async function testSecureDataMethods() {
                 const stdout = response.data.data.stdout || '';
                 const executionMode = response.data.data.executionMode || 'unknown';
                 const securityFiltered = response.data.data.securityFiltered || false;
-                const dataMethodsUsed = response.data.data.dataMethodsUsed || [];
+                const dataVariablesUsed = response.data.data.dataMethodsUsed || [];
 
                 console.log(`✅ SUCCESS (${executionMode} mode)`);
                 console.log(`   Security Filtered: ${securityFiltered}`);
-                console.log(`   Data Methods Used: ${dataMethodsUsed.join(', ')}`);
+                console.log(`   Data Variables Used: ${dataVariablesUsed.join(', ')}`);
                 console.log(`   Output: ${stdout.trim()}`);
 
                 // Check if test passed based on expected output
@@ -332,13 +332,13 @@ async function runTests() {
     await testExecutionMode('full');
 
     // Test new secure two-phase execution
-    await testSecureDataMethods();
+    await testSecureDataVariables();
 
     console.log('\n🎉 Test suite completed!');
     console.log('\n📝 Summary:');
     console.log('- Traditional secure mode: Filters environment variables and uses isolated execution');
     console.log('- Traditional full mode: Uses the original execution behavior');
-    console.log('- NEW: Secure two-phase execution with data methods');
+    console.log('- NEW: Secure two-phase execution with data variables');
     console.log('- Two-phase mode provides secure API key handling with credential isolation');
     console.log('- Sanitized data only crosses the security boundary');
     console.log('- Global code never has access to credentials or sensitive information');

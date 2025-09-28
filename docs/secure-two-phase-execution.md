@@ -32,16 +32,16 @@ The Secure Two-Phase Execution system provides a secure way to execute code that
 
 ```json
 {
-  "Secure_data_methods": {
-    "[methodName]": {
-      "credential": "process.env.CREDENTIAL_NAME",
+  "secure_data_variables": {
+    "[variableNameOfSafeData]": {
+      "credential": "process.env.KEYBOARD_SOME_CREDENTIAL",
       "fetchOptions": {
         "url": "https://api.example.com/endpoint",
         "method": "GET|POST|PUT|PATCH|DELETE",
         "body": "optional request body"
       },
       "headers": {
-        "Authorization": "Bearer process.env.CREDENTIAL_NAME",
+        "Authorization": `Bearer ${process.env.KEYBOARD_SOME_CREDENTIAL}`,
         "Content-Type": "application/json"
       }
     }
@@ -56,7 +56,7 @@ The Secure Two-Phase Execution system provides a secure way to execute code that
 ### Google Docs API Call
 ```json
 {
-  "Secure_data_methods": {
+  "secure_data_variables": {
     "getGoogleDoc": {
       "credential": "process.env.KEYBOARD_GOOGLE_TOKEN",
       "fetchOptions": {
@@ -83,7 +83,7 @@ The Secure Two-Phase Execution system provides a secure way to execute code that
 ### Multiple API Calls
 ```json
 {
-  "Secure_data_methods": {
+  "secure_data_variables": {
     "getUserProfile": {
       "fetchOptions": {
         "url": "https://api.github.com/user",
@@ -199,13 +199,6 @@ let result = await getApiData();
   "type": "execution_error"
 }
 ```
-
-## Environment Variables
-
-The system automatically resolves environment variable references in the configuration:
-
-- `"process.env.KEYBOARD_GOOGLE_TOKEN"` → actual token value
-- `"Bearer process.env.API_KEY"` → `"Bearer actual_key_value"`
 
 ## Best Practices
 
