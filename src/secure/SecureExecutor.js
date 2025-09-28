@@ -93,12 +93,7 @@ class SecureExecutor {
         if (payload.secure_data_variables && payload.Global_code) {
             return this.executeSecureWithDataVariables(payload, headerEnvVars);
         }
-
-        // Legacy support for old format
-        if (payload.Secure_data_methods && payload.Global_code) {
-            return this.executeSecureWithDataMethods(payload, headerEnvVars);
-        }
-
+        
         const codeAnalysis = this.analyzeCodeSecurity(payload.code);
 
         // Check environment variable at runtime for dynamic switching
