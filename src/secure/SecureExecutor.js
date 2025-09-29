@@ -228,7 +228,7 @@ class SecureExecutor {
             try {
                 // Phase 1: Execute secure data methods in isolation
                 const sanitizedDataMethods = await this.executeDataMethodsPhase(payload.Secure_data_methods, headerEnvVars);
-
+                console.log("what it the santizized data methods", sanitizedDataMethods)
                 // Phase 2: Execute global code with access to sanitized data
                 const result = await this.executeGlobalCodePhase(payload.Global_code, sanitizedDataMethods, payload);
 
@@ -1633,7 +1633,7 @@ executeDataMethod().catch(error => {
 
             // Generate the global code with data method injection
             const globalCodeWithInjections = this.generateGlobalCodeWithDataMethods(globalCode, sanitizedDataMethods);
-
+            console.log("what is the global code", globalCodeWithInjections)
             try {
                 fs.writeFileSync(tempPath, globalCodeWithInjections);
 
