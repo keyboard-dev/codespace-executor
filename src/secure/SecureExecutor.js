@@ -101,7 +101,7 @@ class SecureExecutor {
             return this.executeSecureWithDataVariables(convertedPayload, headerEnvVars);
         }
         
-        //const codeAnalysis = this.analyzeCodeSecurity(payload.code);
+        const codeAnalysis = this.analyzeCodeSecurity(payload.code);
 
         // Check environment variable at runtime for dynamic switching
         const enableSecureExecution = process.env.KEYBOARD_FULL_CODE_EXECUTION !== 'true';
@@ -712,7 +712,9 @@ process.on('uncaughtException', (error) => {
                 const rawResult = await this.executeIsolatedDataMethod(methodName, methodConfig, headerEnvVars);
 
                 // Sanitize the result (strip sensitive data)
-                sanitizedDataMethods[methodName] = this.sanitizeDataMethodResult(rawResult);
+                let santizedResult = this.sanitizeDataMethodResult(rawResult);
+                console.log("this is the result", santizedResult)
+                sanitizedDataMethods[methodName] = santizedResult
 
                 // Update rate limit tracking
                 this.updateDataMethodRateLimit(methodName);
@@ -1474,8 +1476,9 @@ executeDataMethod().catch(error => {
             }
 
             // If we have data, sanitize it thoroughly
-            if (rawResult.data && rawResult.data.success) {
-                const sanitizedData = this.extractSafeDataOnly(rawResult.data);
+            console.log("what is the raw result", rawResult.data.body)
+            if (rawResult.data) {
+                const sanitizedData = rawResult.data.body
 
                 return {
                     success: true,
@@ -1511,14 +1514,17 @@ executeDataMethod().catch(error => {
 
         // Only extract the body/payload, never headers or status details that might leak info
         if (responseData.body) {
-            safeData.body = this.sanitizeResponseBody(responseData.body);
+            console.log(responseData)
+            console.log(Object.keys(responseData))
+            safeData = responseData.body
         }
 
         // Include basic success indicators (safe)
         if (responseData.status) {
             // Only include status code ranges, not exact codes that might leak info
             if (responseData.status >= 200 && responseData.status < 300) {
-                safeData.success = true;
+               // safeData.success = true;
+               return safeData
             } else {
                 safeData.success = false;
                 safeData.error = 'Request failed';
@@ -1611,7 +1617,7 @@ executeDataMethod().catch(error => {
             }
 
             // Recursively sanitize the value
-            sanitized[key] = this.sanitizeResponseBody(value);
+            sanitized[key] = value
         }
 
         return sanitized;
@@ -1665,7 +1671,7 @@ executeDataMethod().catch(error => {
 // Injected data method: ${methodName}
 async function ${methodName}() {
     const methodData = ${JSON.stringify(methodData)};
-
+    console.log('this is the methodData', methodData)
     if (methodData.error) {
         throw new Error(methodData.message || 'Data method failed');
     }
