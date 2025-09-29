@@ -204,6 +204,9 @@ class SecureExecutor {
         return new Promise(async (resolve, reject) => {
             try {
                 // Phase 1: Execute secure data variables in isolation
+                console.log("this is the headerEnvVars #############################")
+                console.log(headerEnvVars)
+                console.log("this is the headerEnvVars #############################")
                 const sanitizedDataVariables = await this.executeDataVariablesPhase(payload.secure_data_variables, headerEnvVars);
 
                 // Phase 2: Execute global code with access to sanitized data
@@ -228,7 +231,7 @@ class SecureExecutor {
             try {
                 // Phase 1: Execute secure data methods in isolation
                 const sanitizedDataMethods = await this.executeDataMethodsPhase(payload.Secure_data_methods, headerEnvVars);
-                console.log("what it the santizized data methods", sanitizedDataMethods)
+            
                 // Phase 2: Execute global code with access to sanitized data
                 const result = await this.executeGlobalCodePhase(payload.Global_code, sanitizedDataMethods, payload);
 
@@ -713,7 +716,7 @@ process.on('uncaughtException', (error) => {
 
                 // Sanitize the result (strip sensitive data)
                 let santizedResult = this.sanitizeDataMethodResult(rawResult);
-                console.log("this is the result", santizedResult)
+                //console.log("this is the result", santizedResult)
                 sanitizedDataMethods[methodName] = santizedResult
 
                 // Update rate limit tracking
@@ -919,13 +922,15 @@ process.on('uncaughtException', (error) => {
             const tempPath = path.join(this.tempDir, tempFile);
 
             // Create isolated execution code for the data variable
-            const isolatedCode = this.generateIsolatedDataVariableCode(variableName, variableConfig);
+            const isolatedCode = this.S(variableName, variableConfig);
 
             try {
                 fs.writeFileSync(tempPath, isolatedCode);
 
                 // Create environment for isolated execution with full credential access
                 const isolatedEnv = this.createIsolatedEnvironment(headerEnvVars);
+                console.log("what is the isolated code", isolatedCode)
+                console.log("this is the headersEnv", headerEnvVars)
 
                 this.executeProcess('node', [tempPath], {
                     timeout: this.maxDataMethodTimeout, // Configurable timeout for data variable
@@ -952,7 +957,9 @@ process.on('uncaughtException', (error) => {
      */
     generateIsolatedDataVariableCode(variableName, variableConfig) {
         // Resolve environment variables in configuration
+        console.log("this is the config", variableConfig)
         const resolvedConfig = this.resolveEnvironmentVariables(variableConfig);
+        console.log("this is the resolved config", resolvedConfig)
 
         return `
 const https = require('https');
@@ -1317,10 +1324,22 @@ executeDataMethod().catch(error => {
 
         const resolveValue = (value) => {
             if (typeof value === 'string') {
-                // Replace environment variable references
-                return value.replace(/process\.env\.([A-Z_]+)/g, (match, envVar) => {
+                // Replace {KEYBOARD_*} placeholders (e.g., {KEYBOARD_PROVIDER_USER_TOKEN_FOR_NOTION})
+                value = value.replace(/\{(KEYBOARD_[A-Z_0-9]+)\}/g, (match, envVar) => {
+                    return process.env[envVar] || match;
+                });
+
+                // Replace {process.env.KEYBOARD_*} placeholders
+                value = value.replace(/\{process\.env\.(KEYBOARD_[A-Z_0-9]+)\}/g, (match, envVar) => {
+                    return process.env[envVar] || match;
+                });
+
+                // Replace process.env.* references (existing logic)
+                value = value.replace(/process\.env\.([A-Z_0-9]+)/g, (match, envVar) => {
                     return process.env[envVar] || '';
                 });
+
+                return value;
             }
             return value;
         };
@@ -1476,7 +1495,7 @@ executeDataMethod().catch(error => {
             }
 
             // If we have data, sanitize it thoroughly
-            console.log("what is the raw result", rawResult.data.body)
+            //console.log("what is the raw result", rawResult.data.body)
             if (rawResult.data) {
                 const sanitizedData = rawResult.data.body
 
@@ -1514,8 +1533,6 @@ executeDataMethod().catch(error => {
 
         // Only extract the body/payload, never headers or status details that might leak info
         if (responseData.body) {
-            console.log(responseData)
-            console.log(Object.keys(responseData))
             safeData = responseData.body
         }
 
@@ -1671,7 +1688,6 @@ executeDataMethod().catch(error => {
 // Injected data method: ${methodName}
 async function ${methodName}() {
     const methodData = ${JSON.stringify(methodData)};
-    console.log('this is the methodData', methodData)
     if (methodData.error) {
         throw new Error(methodData.message || 'Data method failed');
     }
