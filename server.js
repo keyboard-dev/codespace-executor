@@ -419,7 +419,7 @@ const server = http.createServer((req, res) => {
         req.on('end', async() => {
             try {
                 const payload = JSON.parse(body);
-
+                console.log("this is the payload", payload)
                 // Handle encryption if encrypt_messages is true
                 if (payload.encrypt_messages) {
                     try {
@@ -461,7 +461,7 @@ const server = http.createServer((req, res) => {
                 //     return res.end(JSON.stringify({ error: 'Resources are not valid, make sure you have the correct environment variables and doc resources before trying to execute' }));
                 // }
 
-                if (payload.code) {
+                if (payload.code || payload.Global_code) {
                     // Check if background execution is requested
                     if (payload.background) {
                         // Submit as background job

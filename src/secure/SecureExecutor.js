@@ -90,11 +90,18 @@ class SecureExecutor {
      */
     async executeCode(payload, headerEnvVars = {}) {
         // Check for new secure data variables payload structure
+        console.log("this is the payload", payload)
         if (payload.secure_data_variables && payload.Global_code) {
             return this.executeSecureWithDataVariables(payload, headerEnvVars);
         }
+
+        // Check for api_calls + global_code format (new restricted-run-code tool format)
+        if (payload.api_calls && (payload.global_code || payload.Global_code)) {
+            const convertedPayload = this.convertApiCallsToSecureDataVariables(payload);
+            return this.executeSecureWithDataVariables(convertedPayload, headerEnvVars);
+        }
         
-        const codeAnalysis = this.analyzeCodeSecurity(payload.code);
+        //const codeAnalysis = this.analyzeCodeSecurity(payload.code);
 
         // Check environment variable at runtime for dynamic switching
         const enableSecureExecution = process.env.KEYBOARD_FULL_CODE_EXECUTION !== 'true';
@@ -111,6 +118,83 @@ class SecureExecutor {
 
         // High/medium risk code uses secure isolation
         return this.executeCodeSecure(payload, headerEnvVars, codeAnalysis);
+    }
+
+    /**
+     * Convert api_calls + global_code format to secure_data_variables + Global_code format
+     */
+    convertApiCallsToSecureDataVariables(payload) {
+        try {
+            const secure_data_variables = {};
+
+            // Convert each api_call to a secure_data_variable
+            for (const [functionName, apiConfig] of Object.entries(payload.api_calls)) {
+                // Validate function name is a valid JavaScript identifier
+                if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(functionName)) {
+                    throw new Error(`Invalid function name: ${functionName}. Must be a valid JavaScript identifier.`);
+                }
+
+                // Convert the api_calls format to secure_data_variables format
+                secure_data_variables[functionName] = {
+                    fetchOptions: {
+                        url: apiConfig.url,
+                        method: apiConfig.method || 'GET',
+                        body: apiConfig.body || null
+                    },
+                    headers: apiConfig.headers || {}
+                };
+
+                // Add timeout if specified
+                if (apiConfig.timeout) {
+                    secure_data_variables[functionName].timeout = apiConfig.timeout;
+                }
+            }
+
+            // Handle both global_code and Global_code (case insensitive)
+            let globalCode = payload.Global_code || payload.global_code;
+            if (!globalCode) {
+                throw new Error('Missing global_code or Global_code in payload');
+            }
+
+            // Fix double-escaped quotes that might come from JSON serialization
+            globalCode = this.unescapeGlobalCode(globalCode);
+
+            // Return converted payload
+            return {
+                secure_data_variables: secure_data_variables,
+                Global_code: globalCode,
+                timeout: payload.timeout || 30000,
+                ai_eval: payload.ai_eval || false,
+                encrypt_messages: payload.encrypt_messages || false,
+                explanation_of_code: payload.explanation_of_code // Pass through if present
+            };
+
+        } catch (error) {
+            throw new Error(`Failed to convert api_calls payload: ${error.message}`);
+        }
+    }
+
+    /**
+     * Unescape double-escaped quotes and other common escape sequences in global code
+     */
+    unescapeGlobalCode(globalCode) {
+        if (typeof globalCode !== 'string') {
+            return globalCode;
+        }
+
+        // Fix common double-escaping issues
+        let unescaped = globalCode
+            // Fix double-escaped quotes
+            .replace(/\\"/g, '"')
+            .replace(/\\'/g, "'")
+            // Fix double-escaped backslashes
+            .replace(/\\\\/g, '\\')
+            // Fix double-escaped newlines
+            .replace(/\\n/g, '\n')
+            .replace(/\\r/g, '\r')
+            .replace(/\\t/g, '\t');
+
+        return unescaped;
     }
 
     /**
@@ -537,8 +621,16 @@ process.on('uncaughtException', (error) => {
                         let result = {
                             success: true,
                             data: {
-                                stdout: options.executionMode === 'secure' ? stdout : this.sanitizeOutput(stdout),
-                                stderr: options.executionMode === 'secure' ? stderr : this.sanitizeOutput(stderr),
+                                stdout: (options.executionMode === 'secure' ||
+                                        options.executionMode === 'isolated-data-variable' ||
+                                        options.executionMode === 'isolated-data-method' ||
+                                        options.skipOutputSanitization) ?
+                                       stdout : this.sanitizeOutput(stdout),
+                                stderr: (options.executionMode === 'secure' ||
+                                        options.executionMode === 'isolated-data-variable' ||
+                                        options.executionMode === 'isolated-data-method' ||
+                                        options.skipOutputSanitization) ?
+                                       stderr : this.sanitizeOutput(stderr),
                                 code,
                                 executionTime: Date.now(),
                                 executionMode: options.executionMode || 'normal',
@@ -836,7 +928,8 @@ process.on('uncaughtException', (error) => {
                 this.executeProcess('node', [tempPath], {
                     timeout: this.maxDataMethodTimeout, // Configurable timeout for data variable
                     env: isolatedEnv,
-                    executionMode: 'isolated-data-variable'
+                    executionMode: 'isolated-data-variable',
+                    skipOutputSanitization: true // Skip sanitization to preserve JSON structure
                 }).then(result => {
                     this.cleanup(tempPath);
                     resolve(this.parseIsolatedDataMethodResult(result));
@@ -1049,7 +1142,8 @@ executeDataVariable().catch(error => {
                 this.executeProcess('node', [tempPath], {
                     timeout: this.maxDataMethodTimeout, // Configurable timeout for data method
                     env: isolatedEnv,
-                    executionMode: 'isolated-data-method'
+                    executionMode: 'isolated-data-method',
+                    skipOutputSanitization: true // Skip sanitization to preserve JSON structure
                 }).then(result => {
                     this.cleanup(tempPath);
                     resolve(this.parseIsolatedDataMethodResult(result));
@@ -1279,10 +1373,55 @@ executeDataMethod().catch(error => {
             const match = stdout.match(/ISOLATED_DATA_METHOD_RESULT: (.+)/);
 
             if (match) {
-                return JSON.parse(match[1]);
+                const jsonString = match[1];
+                try {
+                    return JSON.parse(jsonString);
+                } catch (jsonError) {
+                    // Provide detailed JSON parsing error information
+                    console.error('❌ JSON parsing error in isolated data method result:');
+                    console.error(`   Error: ${jsonError.message}`);
+                    console.error(`   JSON string length: ${jsonString.length}`);
+                    console.error(`   First 100 chars: ${jsonString.substring(0, 100)}`);
+
+                    // Try to identify the problematic character position
+                    const errorPos = this.extractJsonErrorPosition(jsonError.message);
+                    if (errorPos >= 0 && errorPos < jsonString.length) {
+                        const contextStart = Math.max(0, errorPos - 20);
+                        const contextEnd = Math.min(jsonString.length, errorPos + 20);
+                        const context = jsonString.substring(contextStart, contextEnd);
+                        const markerPos = errorPos - contextStart;
+                        const marker = ' '.repeat(markerPos) + '^';
+                        console.error(`   Context around error: "${context}"`);
+                        console.error(`   Error position:      ${marker}`);
+                    }
+
+                    return {
+                        data: null,
+                        error: {
+                            message: `JSON parsing failed: ${jsonError.message}`,
+                            type: 'json_parse_error',
+                            position: errorPos,
+                            context: jsonString.substring(0, 200) // First 200 chars for context
+                        },
+                        unparsed: true
+                    };
+                }
+            } else {
+                console.error('❌ No ISOLATED_DATA_METHOD_RESULT found in stdout');
+                console.error(`   Stdout content: ${stdout.substring(0, 500)}`);
+
+                return {
+                    data: null,
+                    error: {
+                        message: 'No isolated data method result marker found in output',
+                        type: 'missing_result_marker'
+                    },
+                    unparsed: true
+                };
             }
         } catch (parseError) {
-            console.error('Failed to parse isolated data method result:', parseError.message);
+            console.error('❌ Failed to parse isolated data method result:', parseError.message);
+            console.error('   Stack trace:', parseError.stack);
         }
 
         // Fallback: return execution result as-is but mark as unparsed
@@ -1295,6 +1434,28 @@ executeDataMethod().catch(error => {
             unparsed: true,
             rawResult: executionResult
         };
+    }
+
+    /**
+     * Extract error position from JSON error message
+     */
+    extractJsonErrorPosition(errorMessage) {
+        // Try to extract position from error messages like "Unexpected token at position 44"
+        const positionMatch = errorMessage.match(/position (\d+)/);
+        if (positionMatch) {
+            return parseInt(positionMatch[1], 10);
+        }
+
+        // Try to extract from "line X column Y" format
+        const lineColMatch = errorMessage.match(/line (\d+) column (\d+)/);
+        if (lineColMatch) {
+            // For simple cases, estimate position (this is approximate)
+            const line = parseInt(lineColMatch[1], 10);
+            const col = parseInt(lineColMatch[2], 10);
+            return Math.max(0, (line - 1) * 50 + col); // Rough estimate
+        }
+
+        return -1; // Position not found
     }
 
     /**
@@ -1513,7 +1674,8 @@ async function ${methodName}() {
 }`;
         }).join('\n');
 
-        return `
+        // Build the code safely using concatenation instead of template literals
+        const wrapperStart = `
 // Secure Global Code Execution Environment
 // NO CREDENTIALS OR SENSITIVE DATA IS AVAILABLE HERE
 
@@ -1542,7 +1704,9 @@ ${methodInjections}
 (async () => {
     try {
         const result = await (async () => {
-            ${globalCode}
+`;
+
+        const wrapperEnd = `
         })();
 
         // Capture any returned data
@@ -1581,6 +1745,9 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught exception in global execution');
     process.exit(1);
 });`;
+
+        // Concatenate the parts to avoid template literal issues
+        return wrapperStart + globalCode + wrapperEnd;
     }
 
     /**
