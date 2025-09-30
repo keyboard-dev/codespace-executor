@@ -922,7 +922,8 @@ process.on('uncaughtException', (error) => {
             const tempPath = path.join(this.tempDir, tempFile);
 
             // Create isolated execution code for the data variable
-            const isolatedCode = this.S(variableName, variableConfig);
+        
+            const isolatedCode = this.generateIsolatedDataVariableCode(variableName, variableConfig);
 
             try {
                 fs.writeFileSync(tempPath, isolatedCode);
@@ -931,7 +932,7 @@ process.on('uncaughtException', (error) => {
                 const isolatedEnv = this.createIsolatedEnvironment(headerEnvVars);
                 console.log("what is the isolated code", isolatedCode)
                 console.log("this is the headersEnv", headerEnvVars)
-
+                console.log("what is the isolated env", )
                 this.executeProcess('node', [tempPath], {
                     timeout: this.maxDataMethodTimeout, // Configurable timeout for data variable
                     env: isolatedEnv,
@@ -958,10 +959,22 @@ process.on('uncaughtException', (error) => {
     generateIsolatedDataVariableCode(variableName, variableConfig) {
         // Resolve environment variables in configuration
         console.log("this is the config", variableConfig)
-        const resolvedConfig = this.resolveEnvironmentVariables(variableConfig);
-        console.log("this is the resolved config", resolvedConfig)
+        // const resolvedConfig = this.resolveEnvironmentVariables(variableConfig);
+        // console.log("this is the resolved config", resolvedConfig)
 
-        return `
+        // // Build the config object code with runtime interpolation
+        // const configCode = this.buildConfigObjectCode(resolvedConfig);
+        let actualConfig;
+        let actualConfigIsString = typeof variableConfig === "string"
+        if(actualConfigIsString) actualConfig = JSON.parse(variableConfig)
+        else actualConfig = variableConfig
+
+        const {credential} = actualConfig
+        delete actualConfig["credential"]
+        let configCode = this.buildConfigObjectCode(actualConfig)
+        console.log("what is the config", configCode)
+
+        let code = `
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
@@ -986,11 +999,12 @@ console.error = (...args) => {
 
 async function executeDataVariable() {
     try {
-        const config = ${JSON.stringify(resolvedConfig)};
+        const config = ${configCode};
 
         // Prepare fetch options
         const fetchOptions = config.fetchOptions || {};
         const headers = config.headers || {};
+        console.log('what are the headers', headers)
 
         // Default to GET if no method specified
         const method = (fetchOptions.method || 'GET').toUpperCase();
@@ -1100,6 +1114,8 @@ executeDataVariable().catch(error => {
     process.exit(1);
 });
 `;
+
+return code
     }
 
     /**
@@ -1317,28 +1333,69 @@ executeDataMethod().catch(error => {
     }
 
     /**
+     * Build JavaScript code for a config object with runtime interpolation
+     */
+    buildConfigObjectCode(obj) {
+        if (obj === null) return 'null';
+        if (obj === undefined) return 'undefined';
+        if (typeof obj === 'boolean') return obj.toString();
+        if (typeof obj === 'number') return obj.toString();
+
+        if (typeof obj === 'string') {
+            // Check if this string contains interpolation markers
+            if (obj.includes('${process.env.')) {
+                // Return as template literal for runtime interpolation
+                return '`' + obj + '`';
+            }
+            // Regular string
+            return JSON.stringify(obj);
+        }
+
+        if (Array.isArray(obj)) {
+            const elements = obj.map(item => this.buildConfigObjectCode(item));
+            return '[' + elements.join(', ') + ']';
+        }
+
+        if (typeof obj === 'object') {
+            const props = Object.entries(obj).map(([key, value]) => {
+                const keyStr = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key) ? key : JSON.stringify(key);
+                return `${keyStr}: ${this.buildConfigObjectCode(value)}`;
+            });
+            return '{' + props.join(', ') + '}';
+        }
+
+        return 'null';
+    }
+
+    /**
      * Resolve environment variables in configuration
+     * This generates code that will be interpolated at runtime using template literals
      */
     resolveEnvironmentVariables(config) {
         const resolved = JSON.parse(JSON.stringify(config)); // Deep clone
+        console.log("this is the config in the resolve")
+
+        // Get the credential reference (e.g., "process.env.KEYBOARD_PROVIDER_USER_TOKEN_FOR_NOTION")
+        const credentialRef = resolved.credential;
+        console.log("this is the credential reference", credentialRef)
 
         const resolveValue = (value) => {
-            if (typeof value === 'string') {
-                // Replace {KEYBOARD_*} placeholders (e.g., {KEYBOARD_PROVIDER_USER_TOKEN_FOR_NOTION})
+            if (typeof value === 'string' && credentialRef) {
+                console.log('Resolving value:', value);
+
+                // Replace {KEYBOARD_*} placeholders with ${process.env.KEYBOARD_*} for runtime interpolation
                 value = value.replace(/\{(KEYBOARD_[A-Z_0-9]+)\}/g, (match, envVar) => {
-                    return process.env[envVar] || match;
+                    console.log(`Matched {KEYBOARD_*}: ${match}, will use runtime interpolation`);
+                    return `\${process.env.${envVar}}`;
                 });
 
-                // Replace {process.env.KEYBOARD_*} placeholders
+                // Replace {process.env.KEYBOARD_*} placeholders with ${process.env.KEYBOARD_*}
                 value = value.replace(/\{process\.env\.(KEYBOARD_[A-Z_0-9]+)\}/g, (match, envVar) => {
-                    return process.env[envVar] || match;
+                    console.log(`Matched {process.env.KEYBOARD_*}: ${match}, will use runtime interpolation`);
+                    return `\${process.env.${envVar}}`;
                 });
 
-                // Replace process.env.* references (existing logic)
-                value = value.replace(/process\.env\.([A-Z_0-9]+)/g, (match, envVar) => {
-                    return process.env[envVar] || '';
-                });
-
+                console.log('Resolved value:', value);
                 return value;
             }
             return value;
@@ -1346,6 +1403,11 @@ executeDataMethod().catch(error => {
 
         const resolveObject = (obj) => {
             for (const [key, value] of Object.entries(obj)) {
+                // Skip the credential field itself
+                if (key === 'credential') {
+                    continue;
+                }
+
                 if (typeof value === 'object' && value !== null) {
                     resolveObject(value);
                 } else {
@@ -1355,6 +1417,10 @@ executeDataMethod().catch(error => {
         };
 
         resolveObject(resolved);
+
+        // Remove the credential field from the resolved config
+        delete resolved.credential;
+
         return resolved;
     }
 
@@ -1378,9 +1444,12 @@ executeDataMethod().catch(error => {
         });
 
         // Add header environment variables
+        console.log("headerEnvVars in the isolated env", headerEnvVars)
         if (headerEnvVars && typeof headerEnvVars === 'object') {
             Object.assign(isolatedEnv, headerEnvVars);
         }
+
+        console.log("what is the isolated env")
 
         return isolatedEnv;
     }
