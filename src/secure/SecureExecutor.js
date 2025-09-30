@@ -90,7 +90,6 @@ class SecureExecutor {
      */
     async executeCode(payload, headerEnvVars = {}) {
         // Check for new secure data variables payload structure
-        console.log("this is the payload", payload)
         if (payload.secure_data_variables && payload.Global_code) {
             return this.executeSecureWithDataVariables(payload, headerEnvVars);
         }
@@ -204,9 +203,6 @@ class SecureExecutor {
         return new Promise(async (resolve, reject) => {
             try {
                 // Phase 1: Execute secure data variables in isolation
-                console.log("this is the headerEnvVars #############################")
-                console.log(headerEnvVars)
-                console.log("this is the headerEnvVars #############################")
                 const sanitizedDataVariables = await this.executeDataVariablesPhase(payload.secure_data_variables, headerEnvVars);
 
                 // Phase 2: Execute global code with access to sanitized data
@@ -716,7 +712,6 @@ process.on('uncaughtException', (error) => {
 
                 // Sanitize the result (strip sensitive data)
                 let santizedResult = this.sanitizeDataMethodResult(rawResult);
-                //console.log("this is the result", santizedResult)
                 sanitizedDataMethods[methodName] = santizedResult
 
                 // Update rate limit tracking
@@ -930,9 +925,6 @@ process.on('uncaughtException', (error) => {
 
                 // Create environment for isolated execution with full credential access
                 const isolatedEnv = this.createIsolatedEnvironment(headerEnvVars);
-                console.log("what is the isolated code", isolatedCode)
-                console.log("this is the headersEnv", headerEnvVars)
-                console.log("what is the isolated env", )
                 this.executeProcess('node', [tempPath], {
                     timeout: this.maxDataMethodTimeout, // Configurable timeout for data variable
                     env: isolatedEnv,
@@ -957,13 +949,6 @@ process.on('uncaughtException', (error) => {
      * Generate isolated execution code for a data variable (new format)
      */
     generateIsolatedDataVariableCode(variableName, variableConfig) {
-        // Resolve environment variables in configuration
-        console.log("this is the config", variableConfig)
-        // const resolvedConfig = this.resolveEnvironmentVariables(variableConfig);
-        // console.log("this is the resolved config", resolvedConfig)
-
-        // // Build the config object code with runtime interpolation
-        // const configCode = this.buildConfigObjectCode(resolvedConfig);
         let actualConfig;
         let actualConfigIsString = typeof variableConfig === "string"
         if(actualConfigIsString) actualConfig = JSON.parse(variableConfig)
@@ -972,7 +957,6 @@ process.on('uncaughtException', (error) => {
         const {credential} = actualConfig
         delete actualConfig["credential"]
         let configCode = this.buildConfigObjectCode(actualConfig)
-        console.log("what is the config", configCode)
 
         let code = `
 const https = require('https');
@@ -1004,7 +988,7 @@ async function executeDataVariable() {
         // Prepare fetch options
         const fetchOptions = config.fetchOptions || {};
         const headers = config.headers || {};
-        console.log('what are the headers', headers)
+
 
         // Default to GET if no method specified
         const method = (fetchOptions.method || 'GET').toUpperCase();
@@ -1373,29 +1357,22 @@ executeDataMethod().catch(error => {
      */
     resolveEnvironmentVariables(config) {
         const resolved = JSON.parse(JSON.stringify(config)); // Deep clone
-        console.log("this is the config in the resolve")
 
         // Get the credential reference (e.g., "process.env.KEYBOARD_PROVIDER_USER_TOKEN_FOR_NOTION")
         const credentialRef = resolved.credential;
-        console.log("this is the credential reference", credentialRef)
 
         const resolveValue = (value) => {
             if (typeof value === 'string' && credentialRef) {
-                console.log('Resolving value:', value);
 
                 // Replace {KEYBOARD_*} placeholders with ${process.env.KEYBOARD_*} for runtime interpolation
                 value = value.replace(/\{(KEYBOARD_[A-Z_0-9]+)\}/g, (match, envVar) => {
-                    console.log(`Matched {KEYBOARD_*}: ${match}, will use runtime interpolation`);
                     return `\${process.env.${envVar}}`;
                 });
 
                 // Replace {process.env.KEYBOARD_*} placeholders with ${process.env.KEYBOARD_*}
                 value = value.replace(/\{process\.env\.(KEYBOARD_[A-Z_0-9]+)\}/g, (match, envVar) => {
-                    console.log(`Matched {process.env.KEYBOARD_*}: ${match}, will use runtime interpolation`);
                     return `\${process.env.${envVar}}`;
                 });
-
-                console.log('Resolved value:', value);
                 return value;
             }
             return value;
@@ -1444,12 +1421,12 @@ executeDataMethod().catch(error => {
         });
 
         // Add header environment variables
-        console.log("headerEnvVars in the isolated env", headerEnvVars)
+   
         if (headerEnvVars && typeof headerEnvVars === 'object') {
             Object.assign(isolatedEnv, headerEnvVars);
         }
 
-        console.log("what is the isolated env")
+     
 
         return isolatedEnv;
     }
@@ -1563,8 +1540,7 @@ executeDataMethod().catch(error => {
                 };
             }
 
-            // If we have data, sanitize it thoroughly
-            //console.log("what is the raw result", rawResult.data.body)
+
             if (rawResult.data) {
                 const sanitizedData = rawResult.data.body
 
@@ -1719,7 +1695,6 @@ executeDataMethod().catch(error => {
 
             // Generate the global code with data method injection
             const globalCodeWithInjections = this.generateGlobalCodeWithDataMethods(globalCode, sanitizedDataMethods);
-            console.log("what is the global code", globalCodeWithInjections)
             try {
                 fs.writeFileSync(tempPath, globalCodeWithInjections);
 
