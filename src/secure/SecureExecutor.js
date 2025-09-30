@@ -202,6 +202,9 @@ class SecureExecutor {
     async executeSecureWithDataVariables(payload, headerEnvVars = {}) {
         return new Promise(async (resolve, reject) => {
             try {
+                // Validate global code doesn't try to access process.env.KEYBOARD_* variables
+                this.validateGlobalCodeForEnvAccess(payload.Global_code);
+
                 // Phase 1: Execute secure data variables in isolation
                 const sanitizedDataVariables = await this.executeDataVariablesPhase(payload.secure_data_variables, headerEnvVars);
 
@@ -776,6 +779,28 @@ process.on('uncaughtException', (error) => {
         }
 
         return sanitizedDataVariables;
+    }
+
+    /**
+     * Validate that global code doesn't try to access process.env.KEYBOARD_* variables
+     * Static analysis layer - catches obvious env var access before execution
+     */
+    validateGlobalCodeForEnvAccess(globalCode) {
+        if (!globalCode || typeof globalCode !== 'string') {
+            return; // Nothing to validate
+        }
+
+        // Pattern to detect process.env.KEYBOARD_* access
+        const envAccessPattern = /process\.env\.KEYBOARD_[A-Z_0-9]+/g;
+        const matches = globalCode.match(envAccessPattern);
+
+        if (matches && matches.length > 0) {
+            throw new Error(
+                '❌ Error: Do not try to execute process.env code in the global code. ' +
+                'Please interact with external APIs in the api_calls section. ' +
+                `Found: ${matches.slice(0, 3).join(', ')}${matches.length > 3 ? '...' : ''}`
+            );
+        }
     }
 
     /**
@@ -1762,6 +1787,37 @@ console.error = (...args) => {
     capturedOutput.stderr += output + '\\n';
     originalConsoleError(...args);
 };
+
+// Runtime blocker: Prevent access to process.env.KEYBOARD_* variables
+// This catches dynamic access patterns that static analysis might miss
+const originalProcessEnv = process.env;
+process.env = new Proxy(originalProcessEnv, {
+    get(target, prop) {
+        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
+            const errorMsg = '❌ Error: Do not try to execute process.env code in the global code. Please interact with external APIs in the api_calls section.';
+            console.error(errorMsg);
+            throw new Error(errorMsg);
+        }
+        return target[prop];
+    },
+    has(target, prop) {
+        // Also block 'in' operator checks like: 'KEYBOARD_API_KEY' in process.env
+        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
+            return false;
+        }
+        return prop in target;
+    },
+    ownKeys(target) {
+        // Block Object.keys(process.env) from showing KEYBOARD_ vars
+        return Object.keys(target).filter(key => !key.startsWith('KEYBOARD_'));
+    },
+    getOwnPropertyDescriptor(target, prop) {
+        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
+            return undefined;
+        }
+        return Object.getOwnPropertyDescriptor(target, prop);
+    }
+});
 
 // Inject sanitized data methods
 ${methodInjections}
