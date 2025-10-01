@@ -147,6 +147,11 @@ class SecureExecutor {
                 if (apiConfig.timeout) {
                     secure_data_variables[functionName].timeout = apiConfig.timeout;
                 }
+          
+                // Preserve passed_variables for dependency resolution
+                if (apiConfig.passed_variables) {
+                    secure_data_variables[functionName].passed_variables = apiConfig.passed_variables;
+                }
             }
 
             // Handle both global_code and Global_code (case insensitive)
@@ -203,6 +208,7 @@ class SecureExecutor {
         return new Promise(async (resolve, reject) => {
             try {
                 // Validate global code doesn't try to access process.env.KEYBOARD_* variables
+          
                 this.validateGlobalCodeForEnvAccess(payload.Global_code);
 
                 // Phase 1: Execute secure data variables in isolation
@@ -741,10 +747,20 @@ process.on('uncaughtException', (error) => {
         // Security validation for data variables payload
         this.validateSecureDataVariablesPayload(secureDataVariables);
 
-        const sanitizedDataVariables = {};
+        // Build dependency graph and get execution order
+        const executionOrder = this.buildDependencyGraph(secureDataVariables);
+  
 
-        for (const [variableName, variableConfig] of Object.entries(secureDataVariables)) {
+        const sanitizedDataVariables = {};
+        const resultsMap = {}; // Store raw results for dependency interpolation
+
+        // Execute in dependency order (sequential)
+        for (const variableName of executionOrder) {
             try {
+                const variableConfig = secureDataVariables[variableName];
+
+              
+
                 // Check rate limits
                 if (!this.checkDataMethodRateLimit(variableName)) {
                     sanitizedDataVariables[variableName] = {
@@ -758,8 +774,23 @@ process.on('uncaughtException', (error) => {
                 // Validate variable configuration
                 this.validateDataVariableConfig(variableConfig);
 
+                // Interpolate passed_variables if present
+                let configToExecute = variableConfig;
+                console.log(variableConfig)
+                console.log("variableConfig is a string", typeof variableConfig === "string")
+                if (variableConfig?.passed_variables && typeof variableConfig?.passed_variables === 'object') {
+                    console.log("inside the interpolaton")
+                    configToExecute = this.interpolatePassedVariables(variableConfig, variableConfig.passed_variables, resultsMap);
+                    console.log("interpolated config", configToExecute)
+                }
+
+
+
                 // Execute the data variable in isolation
-                const rawResult = await this.executeIsolatedDataVariable(variableName, variableConfig, headerEnvVars);
+                const rawResult = await this.executeIsolatedDataVariable(variableName, configToExecute, headerEnvVars);
+
+                // Store raw result for dependency interpolation
+                resultsMap[variableName] = rawResult;
 
                 // Sanitize the result (strip sensitive data)
                 sanitizedDataVariables[variableName] = this.sanitizeDataMethodResult(rawResult);
@@ -772,13 +803,244 @@ process.on('uncaughtException', (error) => {
                 sanitizedDataVariables[variableName] = {
                     error: true,
                     message: 'Data variable execution failed',
-                    type: 'execution_error'
+                    type: 'execution_error',
+                    details: error.message
                 };
                 console.error(`❌ Data variable ${variableName} failed:`, error.message);
             }
         }
 
         return sanitizedDataVariables;
+    }
+
+    /**
+     * Build dependency graph for data variables and return execution order
+     * Uses topological sort to determine which variables must execute first
+     */
+    buildDependencyGraph(secureDataVariables) {
+        const variableNames = Object.keys(secureDataVariables);
+        const dependencies = new Map(); // variable -> array of dependencies
+        const dependents = new Map();   // variable -> array of dependents
+
+        // Initialize maps
+        variableNames.forEach(name => {
+            dependencies.set(name, []);
+            dependents.set(name, []);
+        });
+
+        // Build dependency relationships
+        for (const [variableName, config] of Object.entries(secureDataVariables)) {
+            if (config.passed_variables && typeof config.passed_variables === 'object') {
+                for (const [field, passedConfig] of Object.entries(config.passed_variables)) {
+                    const dependencyName = passedConfig.passed_from;
+
+                    if (!dependencyName) {
+                        throw new Error(`passed_variables.${field} in ${variableName} must have 'passed_from' field`);
+                    }
+
+                    if (!variableNames.includes(dependencyName)) {
+                        throw new Error(`${variableName} depends on '${dependencyName}' which doesn't exist in api_calls`);
+                    }
+
+                    // variableName depends on dependencyName
+                    dependencies.get(variableName).push(dependencyName);
+                    dependents.get(dependencyName).push(variableName);
+                }
+            }
+        }
+
+        // Detect circular dependencies using DFS
+        const visited = new Set();
+        const recursionStack = new Set();
+
+        const detectCycle = (node, path = []) => {
+            if (recursionStack.has(node)) {
+                const cycle = [...path, node];
+                throw new Error(`Circular dependency detected: ${cycle.join(' -> ')}`);
+            }
+
+            if (visited.has(node)) {
+                return;
+            }
+
+            visited.add(node);
+            recursionStack.add(node);
+            path.push(node);
+
+            const deps = dependencies.get(node) || [];
+            for (const dep of deps) {
+                detectCycle(dep, [...path]);
+            }
+
+            recursionStack.delete(node);
+        };
+
+        variableNames.forEach(name => detectCycle(name));
+
+        // Topological sort using Kahn's algorithm
+        const inDegree = new Map();
+        variableNames.forEach(name => {
+            inDegree.set(name, dependencies.get(name).length);
+        });
+
+        const queue = [];
+        const executionOrder = [];
+
+        // Start with variables that have no dependencies
+        variableNames.forEach(name => {
+            if (inDegree.get(name) === 0) {
+                queue.push(name);
+            }
+        });
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            executionOrder.push(current);
+
+            // Reduce in-degree for all dependents
+            const currentDependents = dependents.get(current) || [];
+            for (const dependent of currentDependents) {
+                inDegree.set(dependent, inDegree.get(dependent) - 1);
+                if (inDegree.get(dependent) === 0) {
+                    queue.push(dependent);
+                }
+            }
+        }
+
+        // If not all variables are in execution order, there's a cycle
+        if (executionOrder.length !== variableNames.length) {
+            throw new Error('Circular dependency detected in api_calls');
+        }
+
+        return executionOrder;
+    }
+
+    /**
+     * Interpolate passed_variables into config using results from previous executions
+     * @param {Object} config - Original variable configuration
+     * @param {Object} passed_variables - Map of field -> {passed_from, value}
+     * @param {Object} resultsMap - Map of variableName -> execution result
+     * @returns {Object} - Config with interpolated values
+     */
+    interpolatePassedVariables(config, passed_variables, resultsMap) {
+        // Deep clone config to avoid mutations
+        const interpolatedConfig = JSON.parse(JSON.stringify(config));
+
+        // Remove passed_variables from the config (it's metadata, not execution config)
+        delete interpolatedConfig.passed_variables;
+        console.log("what is the passed variables", passed_variables)
+        for (const [fieldPath, passedConfig] of Object.entries(passed_variables)) {
+            let { passed_from, value, field_name} = passedConfig;
+
+            if (!passed_from || !value) {
+                throw new Error(`passed_variables.${fieldPath} must have 'passed_from' and 'value' fields`);
+            }
+
+            // Get the result from the dependency
+            const dependencyResult = resultsMap[passed_from];
+            if (!dependencyResult) {
+                throw new Error(`Cannot interpolate ${fieldPath}: ${passed_from} has not been executed yet`);
+            }
+            console.log("dis the field_name", field_name)
+            if(field_name?.startsWith("url")) field_name = `fetchOptions.${field_name}`
+            if(field_name?.startsWith("body")) field_name = `fetchOptions.${field_name}`
+            if(field_name?.startsWith("method")) field_name = `fetchOptions.${field_name}`
+
+            // Extract the data from the dependency result
+            // Result structure: { data: { status, headers, body, success }, ... }
+            console.log("what are the result maps!", resultsMap)
+            console.log("what are the dependencies", dependencyResult)
+            const resultData = dependencyResult.data?.body
+
+            // Interpolate the value template with result data
+            const interpolatedValue = this.interpolateTemplate(value, { result: resultData });
+            console.log("what it is the interpolated value", interpolatedValue)
+            console.log("what is the field path", fieldPath)
+            console.log("this is the field name", field_name)
+
+            // Set the interpolated value at the field path
+            this.setValueAtPath(interpolatedConfig, field_name, interpolatedValue);
+        }
+
+        return interpolatedConfig;
+    }
+
+    /**
+     * Interpolate a template string with data
+     * Supports ${result.field} and ${result.nested.field} syntax
+     * Leaves ${process.env.*} patterns untouched for runtime evaluation
+     * @param {String} template - Template string with ${} placeholders
+     * @param {Object} data - Data object to interpolate from
+     * @returns {String} - Interpolated string
+     */
+    interpolateTemplate(template, data) {
+        if (typeof template !== 'string') {
+            return template;
+        }
+
+        // Replace only ${result.*} patterns, leave ${process.env.*} patterns for runtime
+        return template.replace(/\$\{result\.([^}]+)\}/g, (match, path) => {
+            // path = "id" or "body.name" (without the "result." prefix)
+            const fullPath = 'result.' + path;
+            const value = this.getValueAtPath(data, fullPath);
+
+            if (value === undefined || value === null) {
+                const error = `Interpolation failed: ${fullPath} is undefined. Available data: ${JSON.stringify(data, null, 2)}`;
+                console.error(`❌ ${error}`);
+                throw new Error(error);
+            }
+
+            return value;
+        });
+    }
+
+    /**
+     * Get value from object using dot-notation path
+     * @param {Object} obj - Object to get value from
+     * @param {String} path - Dot-notation path (e.g., "result.id" or "result.body.name")
+     * @returns {*} - Value at path or undefined
+     */
+    getValueAtPath(obj, path) {
+        const parts = path.split('.');
+        let current = obj;
+
+        for (const part of parts) {
+            if (current === undefined || current === null) {
+                return undefined;
+            }
+            current = current[part];
+        }
+
+        return current;
+    }
+
+    /**
+     * Set value in object using dot-notation path
+     * Supports nested paths like "headers.Authorization" or "body.user.id"
+     * @param {Object} obj - Object to set value in
+     * @param {String} path - Dot-notation path
+     * @param {*} value - Value to set
+     */
+    setValueAtPath(obj, path, value) {
+        const parts = path.split('.');
+        let current = obj;
+
+        // Navigate to the parent of the target field
+        for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i];
+
+            // Create nested object if it doesn't exist
+            if (!(part in current) || typeof current[part] !== 'object') {
+                current[part] = {};
+            }
+
+            current = current[part];
+        }
+        
+
+        // Set the final value
+        const finalKey = parts[parts.length - 1];
+        current[finalKey] = value;
     }
 
     /**
@@ -931,6 +1193,38 @@ process.on('uncaughtException', (error) => {
         if (config.headers && typeof config.headers !== 'object') {
             throw new Error('Headers must be an object');
         }
+
+        // Validate passed_variables if present
+        if (config.passed_variables) {
+            if (typeof config.passed_variables !== 'object' || Array.isArray(config.passed_variables)) {
+                throw new Error('passed_variables must be an object (not an array)');
+            }
+
+            // Validate each passed variable configuration
+            for (const [fieldPath, passedConfig] of Object.entries(config.passed_variables)) {
+                if (!passedConfig || typeof passedConfig !== 'object') {
+                    throw new Error(`passed_variables.${fieldPath} must be an object`);
+                }
+
+                if (!passedConfig.passed_from || typeof passedConfig.passed_from !== 'string') {
+                    throw new Error(`passed_variables.${fieldPath}.passed_from must be a string`);
+                }
+
+                if (!passedConfig.value || typeof passedConfig.value !== 'string') {
+                    throw new Error(`passed_variables.${fieldPath}.value must be a string`);
+                }
+
+                // Validate fieldPath is a valid path (alphanumeric, dots, dashes, and underscores)
+                if (!/^[a-zA-Z_][a-zA-Z0-9_.-]*$/.test(fieldPath)) {
+                    throw new Error(`Invalid field path in passed_variables: ${fieldPath}`);
+                }
+
+                // Validate passed_from is a valid identifier
+                if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(passedConfig.passed_from)) {
+                    throw new Error(`Invalid passed_from identifier: ${passedConfig.passed_from}`);
+                }
+            }
+        }
     }
 
     /**
@@ -944,6 +1238,7 @@ process.on('uncaughtException', (error) => {
             // Create isolated execution code for the data variable
         
             const isolatedCode = this.generateIsolatedDataVariableCode(variableName, variableConfig);
+        
 
             try {
                 fs.writeFileSync(tempPath, isolatedCode);
@@ -1751,6 +2046,8 @@ executeDataMethod().catch(error => {
      * Generate global code with injected data method functions
      */
     generateGlobalCodeWithDataMethods(globalCode, sanitizedDataMethods) {
+   
+
         // Create function injections for each data method
         const methodInjections = Object.entries(sanitizedDataMethods).map(([methodName, methodData]) => {
             return `
