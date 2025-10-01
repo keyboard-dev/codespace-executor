@@ -1,5 +1,5 @@
-const awaitedScriptGenerator = function(payload, asyncTimeout) {
-  return `(async () => {
+const awaitedScriptGenerator = function (payload, asyncTimeout) {
+    return `(async () => {
     try {
         ${payload.code}
         await new Promise(resolve => setTimeout(resolve, ${asyncTimeout}));
@@ -39,7 +39,7 @@ process.on('uncaughtException', (error) => {
 });`
 }
 
-const secureWrapperGenerator = function(payload, asyncTimeout) {
+const secureWrapperGenerator = function (payload, asyncTimeout) {
     return `const originalConsoleError = console.error;
 const originalConsoleLog = console.log;
 let capturedOutput = { stdout: '', stderr: '', data: null, errors: [] };
@@ -103,7 +103,7 @@ process.on('uncaughtException', (error) => {
 });`;
 }
 
-const isolatedDataVariableGenerator = function(configCode) {
+const isolatedDataVariableGenerator = function (configCode) {
     return `
 const https = require('https');
 const http = require('http');
@@ -246,7 +246,7 @@ executeDataVariable().catch(error => {
 `;
 }
 
-const isolatedDataMethodCodeGenerator = function(resolvedConfig) {
+const isolatedDataMethodCodeGenerator = function (resolvedConfig) {
     return `const https = require('https');
 const http = require('http');
 const { URL } = require('url');
@@ -387,4 +387,130 @@ executeDataMethod().catch(error => {
 `
 }
 
-module.exports = { awaitedScriptGenerator, secureWrapperGenerator, isolatedDataVariableGenerator, isolatedDataMethodCodeGenerator };
+const globalCodeWithDataMethodsGenerator = function (globalCode, sanitizedDataMethods) {
+
+
+    // Create function injections for each data method
+    const methodInjections = Object.entries(sanitizedDataMethods).map(([methodName, methodData]) => {
+        return `
+// Injected data method: ${methodName}
+async function ${methodName}() {
+    const methodData = ${JSON.stringify(methodData)};
+    if (methodData.error) {
+        throw new Error(methodData.message || 'Data method failed');
+    }
+
+    return methodData.data || methodData;
+}`;
+    }).join('\n');
+
+    // Build the code safely using concatenation instead of template literals
+    const wrapperStart = `
+// Secure Global Code Execution Environment
+// NO CREDENTIALS OR SENSITIVE DATA IS AVAILABLE HERE
+
+const capturedOutput = { stdout: '', stderr: '', data: null, errors: [] };
+
+// Override console methods to capture output
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+console.log = (...args) => {
+    const output = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+    capturedOutput.stdout += output + '\\n';
+    originalConsoleLog(...args);
+};
+
+console.error = (...args) => {
+    const output = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+    capturedOutput.stderr += output + '\\n';
+    originalConsoleError(...args);
+};
+
+// Runtime blocker: Prevent access to process.env.KEYBOARD_* variables
+// This catches dynamic access patterns that static analysis might miss
+const originalProcessEnv = process.env;
+process.env = new Proxy(originalProcessEnv, {
+    get(target, prop) {
+        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
+            const errorMsg = '❌ Error: Do not try to execute process.env code in the global code. Please interact with external APIs in the api_calls section.';
+            console.error(errorMsg);
+            throw new Error(errorMsg);
+        }
+        return target[prop];
+    },
+    has(target, prop) {
+        // Also block 'in' operator checks like: 'KEYBOARD_API_KEY' in process.env
+        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
+            return false;
+        }
+        return prop in target;
+    },
+    ownKeys(target) {
+        // Block Object.keys(process.env) from showing KEYBOARD_ vars
+        return Object.keys(target).filter(key => !key.startsWith('KEYBOARD_'));
+    },
+    getOwnPropertyDescriptor(target, prop) {
+        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
+            return undefined;
+        }
+        return Object.getOwnPropertyDescriptor(target, prop);
+    }
+});
+
+// Inject sanitized data methods
+${methodInjections}
+
+// Execute global code in secure context
+(async () => {
+    try {
+        const result = await (async () => {
+`;
+
+    const wrapperEnd = `
+        })();
+
+        // Capture any returned data
+        if (result !== undefined) {
+            capturedOutput.data = result;
+        }
+
+        // Wait for async operations
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+    } catch (error) {
+        // Capture error without sensitive information
+        const safeError = {
+            message: error.message || 'Unknown error',
+            type: error.constructor.name,
+            // Intentionally NO stack trace to prevent info leakage
+        };
+        capturedOutput.errors.push(safeError);
+        console.error('❌ Global code execution error:', safeError.message);
+    }
+
+    // Output results in controlled format
+    console.log('SECURE_GLOBAL_EXECUTION_RESULT:', JSON.stringify(capturedOutput));
+    process.exit(0);
+})().catch(error => {
+    console.error('❌ Global execution wrapper error:', error.message);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled rejection in global execution');
+    process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught exception in global execution');
+    process.exit(1);
+});`;
+
+    // Concatenate the parts to avoid template literal issues
+    return wrapperStart + globalCode + wrapperEnd;
+}
+
+
+
+module.exports = { awaitedScriptGenerator, secureWrapperGenerator, isolatedDataVariableGenerator, isolatedDataMethodCodeGenerator, globalCodeWithDataMethodsGenerator };

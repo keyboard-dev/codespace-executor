@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomBytes } = require('crypto');
 const { safeObfuscate } = require('../utils/crypto');
-const { awaitedScriptGenerator, secureWrapperGenerator, isolatedDataVariableGenerator, isolatedDataMethodCodeGenerator} = require('./templates');
+const { awaitedScriptGenerator, secureWrapperGenerator, isolatedDataVariableGenerator, isolatedDataMethodCodeGenerator, globalCodeWithDataMethodsGenerator } = require('./templates');
 
 class SecureExecutor {
     constructor(options = {}) {
@@ -100,7 +100,7 @@ class SecureExecutor {
             const convertedPayload = this.convertApiCallsToSecureDataVariables(payload);
             return this.executeSecureWithDataVariables(convertedPayload, headerEnvVars);
         }
-        
+
         const codeAnalysis = this.analyzeCodeSecurity(payload.code);
 
         // Check environment variable at runtime for dynamic switching
@@ -145,7 +145,7 @@ class SecureExecutor {
                 if (apiConfig.timeout) {
                     secure_data_variables[functionName].timeout = apiConfig.timeout;
                 }
-          
+
                 // Preserve passed_variables for dependency resolution
                 if (apiConfig.passed_variables) {
                     secure_data_variables[functionName].passed_variables = apiConfig.passed_variables;
@@ -252,12 +252,12 @@ class SecureExecutor {
 
             // Apply async wrapper if needed (same logic as original)
             const needsAsyncWrapper = codeToExecute.includes('await') ||
-                                     codeToExecute.includes('Promise') ||
-                                     codeToExecute.includes('.then(') ||
-                                     codeToExecute.includes('setTimeout') ||
-                                     codeToExecute.includes('setInterval') ||
-                                     codeToExecute.includes('https.request') ||
-                                     codeToExecute.includes('fetch(');
+                codeToExecute.includes('Promise') ||
+                codeToExecute.includes('.then(') ||
+                codeToExecute.includes('setTimeout') ||
+                codeToExecute.includes('setInterval') ||
+                codeToExecute.includes('https.request') ||
+                codeToExecute.includes('fetch(');
 
             if (needsAsyncWrapper) {
                 const asyncTimeout = payload.asyncTimeout || 5000;
@@ -520,15 +520,15 @@ class SecureExecutor {
                             success: true,
                             data: {
                                 stdout: (options.executionMode === 'secure' ||
-                                        options.executionMode === 'isolated-data-variable' ||
-                                        options.executionMode === 'isolated-data-method' ||
-                                        options.skipOutputSanitization) ?
-                                       stdout : this.sanitizeOutput(stdout),
+                                    options.executionMode === 'isolated-data-variable' ||
+                                    options.executionMode === 'isolated-data-method' ||
+                                    options.skipOutputSanitization) ?
+                                    stdout : this.sanitizeOutput(stdout),
                                 stderr: (options.executionMode === 'secure' ||
-                                        options.executionMode === 'isolated-data-variable' ||
-                                        options.executionMode === 'isolated-data-method' ||
-                                        options.skipOutputSanitization) ?
-                                       stderr : this.sanitizeOutput(stderr),
+                                    options.executionMode === 'isolated-data-variable' ||
+                                    options.executionMode === 'isolated-data-method' ||
+                                    options.skipOutputSanitization) ?
+                                    stderr : this.sanitizeOutput(stderr),
                                 code,
                                 executionTime: Date.now(),
                                 executionMode: options.executionMode || 'normal',
@@ -639,7 +639,7 @@ class SecureExecutor {
 
         // Build dependency graph and get execution order
         const executionOrder = this.buildDependencyGraph(secureDataVariables);
-  
+
 
         const sanitizedDataVariables = {};
         const resultsMap = {}; // Store raw results for dependency interpolation
@@ -649,7 +649,7 @@ class SecureExecutor {
             try {
                 const variableConfig = secureDataVariables[variableName];
 
-              
+
 
                 // Check rate limits
                 if (!this.checkDataMethodRateLimit(variableName)) {
@@ -666,12 +666,8 @@ class SecureExecutor {
 
                 // Interpolate passed_variables if present
                 let configToExecute = variableConfig;
-                console.log(variableConfig)
-                console.log("variableConfig is a string", typeof variableConfig === "string")
                 if (variableConfig?.passed_variables && typeof variableConfig?.passed_variables === 'object') {
-                    console.log("inside the interpolaton")
                     configToExecute = this.interpolatePassedVariables(variableConfig, variableConfig.passed_variables, resultsMap);
-                    console.log("interpolated config", configToExecute)
                 }
 
 
@@ -818,9 +814,8 @@ class SecureExecutor {
 
         // Remove passed_variables from the config (it's metadata, not execution config)
         delete interpolatedConfig.passed_variables;
-        console.log("what is the passed variables", passed_variables)
         for (const [fieldPath, passedConfig] of Object.entries(passed_variables)) {
-            let { passed_from, value, field_name} = passedConfig;
+            let { passed_from, value, field_name } = passedConfig;
 
             if (!passed_from || !value) {
                 throw new Error(`passed_variables.${fieldPath} must have 'passed_from' and 'value' fields`);
@@ -831,22 +826,17 @@ class SecureExecutor {
             if (!dependencyResult) {
                 throw new Error(`Cannot interpolate ${fieldPath}: ${passed_from} has not been executed yet`);
             }
-            console.log("dis the field_name", field_name)
-            if(field_name?.startsWith("url")) field_name = `fetchOptions.${field_name}`
-            if(field_name?.startsWith("body")) field_name = `fetchOptions.${field_name}`
-            if(field_name?.startsWith("method")) field_name = `fetchOptions.${field_name}`
+
+            if (field_name?.startsWith("url")) field_name = `fetchOptions.${field_name}`
+            if (field_name?.startsWith("body")) field_name = `fetchOptions.${field_name}`
+            if (field_name?.startsWith("method")) field_name = `fetchOptions.${field_name}`
 
             // Extract the data from the dependency result
             // Result structure: { data: { status, headers, body, success }, ... }
-            console.log("what are the result maps!", resultsMap)
-            console.log("what are the dependencies", dependencyResult)
             const resultData = dependencyResult.data?.body
 
             // Interpolate the value template with result data
             const interpolatedValue = this.interpolateTemplate(value, { result: resultData });
-            console.log("what it is the interpolated value", interpolatedValue)
-            console.log("what is the field path", fieldPath)
-            console.log("this is the field name", field_name)
 
             // Set the interpolated value at the field path
             this.setValueAtPath(interpolatedConfig, field_name, interpolatedValue);
@@ -926,7 +916,7 @@ class SecureExecutor {
 
             current = current[part];
         }
-        
+
 
         // Set the final value
         const finalKey = parts[parts.length - 1];
@@ -1126,9 +1116,9 @@ class SecureExecutor {
             const tempPath = path.join(this.tempDir, tempFile);
 
             // Create isolated execution code for the data variable
-        
+
             const isolatedCode = this.generateIsolatedDataVariableCode(variableName, variableConfig);
-        
+
 
             try {
                 fs.writeFileSync(tempPath, isolatedCode);
@@ -1161,10 +1151,10 @@ class SecureExecutor {
     generateIsolatedDataVariableCode(variableName, variableConfig) {
         let actualConfig;
         let actualConfigIsString = typeof variableConfig === "string"
-        if(actualConfigIsString) actualConfig = JSON.parse(variableConfig)
+        if (actualConfigIsString) actualConfig = JSON.parse(variableConfig)
         else actualConfig = variableConfig
 
-        const {credential} = actualConfig
+        const { credential } = actualConfig
         delete actualConfig["credential"]
         let configCode = this.buildConfigObjectCode(actualConfig)
 
@@ -1353,12 +1343,12 @@ class SecureExecutor {
         });
 
         // Add header environment variables
-   
+
         if (headerEnvVars && typeof headerEnvVars === 'object') {
             Object.assign(isolatedEnv, headerEnvVars);
         }
 
-     
+
 
         return isolatedEnv;
     }
@@ -1517,8 +1507,8 @@ class SecureExecutor {
         if (responseData.status) {
             // Only include status code ranges, not exact codes that might leak info
             if (responseData.status >= 200 && responseData.status < 300) {
-               // safeData.success = true;
-               return safeData
+                // safeData.success = true;
+                return safeData
             } else {
                 safeData.success = false;
                 safeData.error = 'Request failed';
@@ -1658,127 +1648,7 @@ class SecureExecutor {
      * Generate global code with injected data method functions
      */
     generateGlobalCodeWithDataMethods(globalCode, sanitizedDataMethods) {
-   
-
-        // Create function injections for each data method
-        const methodInjections = Object.entries(sanitizedDataMethods).map(([methodName, methodData]) => {
-            return `
-// Injected data method: ${methodName}
-async function ${methodName}() {
-    const methodData = ${JSON.stringify(methodData)};
-    if (methodData.error) {
-        throw new Error(methodData.message || 'Data method failed');
-    }
-
-    return methodData.data || methodData;
-}`;
-        }).join('\n');
-
-        // Build the code safely using concatenation instead of template literals
-        const wrapperStart = `
-// Secure Global Code Execution Environment
-// NO CREDENTIALS OR SENSITIVE DATA IS AVAILABLE HERE
-
-const capturedOutput = { stdout: '', stderr: '', data: null, errors: [] };
-
-// Override console methods to capture output
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
-
-console.log = (...args) => {
-    const output = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
-    capturedOutput.stdout += output + '\\n';
-    originalConsoleLog(...args);
-};
-
-console.error = (...args) => {
-    const output = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
-    capturedOutput.stderr += output + '\\n';
-    originalConsoleError(...args);
-};
-
-// Runtime blocker: Prevent access to process.env.KEYBOARD_* variables
-// This catches dynamic access patterns that static analysis might miss
-const originalProcessEnv = process.env;
-process.env = new Proxy(originalProcessEnv, {
-    get(target, prop) {
-        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
-            const errorMsg = '❌ Error: Do not try to execute process.env code in the global code. Please interact with external APIs in the api_calls section.';
-            console.error(errorMsg);
-            throw new Error(errorMsg);
-        }
-        return target[prop];
-    },
-    has(target, prop) {
-        // Also block 'in' operator checks like: 'KEYBOARD_API_KEY' in process.env
-        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
-            return false;
-        }
-        return prop in target;
-    },
-    ownKeys(target) {
-        // Block Object.keys(process.env) from showing KEYBOARD_ vars
-        return Object.keys(target).filter(key => !key.startsWith('KEYBOARD_'));
-    },
-    getOwnPropertyDescriptor(target, prop) {
-        if (typeof prop === 'string' && prop.startsWith('KEYBOARD_')) {
-            return undefined;
-        }
-        return Object.getOwnPropertyDescriptor(target, prop);
-    }
-});
-
-// Inject sanitized data methods
-${methodInjections}
-
-// Execute global code in secure context
-(async () => {
-    try {
-        const result = await (async () => {
-`;
-
-        const wrapperEnd = `
-        })();
-
-        // Capture any returned data
-        if (result !== undefined) {
-            capturedOutput.data = result;
-        }
-
-        // Wait for async operations
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-    } catch (error) {
-        // Capture error without sensitive information
-        const safeError = {
-            message: error.message || 'Unknown error',
-            type: error.constructor.name,
-            // Intentionally NO stack trace to prevent info leakage
-        };
-        capturedOutput.errors.push(safeError);
-        console.error('❌ Global code execution error:', safeError.message);
-    }
-
-    // Output results in controlled format
-    console.log('SECURE_GLOBAL_EXECUTION_RESULT:', JSON.stringify(capturedOutput));
-    process.exit(0);
-})().catch(error => {
-    console.error('❌ Global execution wrapper error:', error.message);
-    process.exit(1);
-});
-
-process.on('unhandledRejection', (reason) => {
-    console.error('❌ Unhandled rejection in global execution');
-    process.exit(1);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught exception in global execution');
-    process.exit(1);
-});`;
-
-        // Concatenate the parts to avoid template literal issues
-        return wrapperStart + globalCode + wrapperEnd;
+        return globalCodeWithDataMethodsGenerator(globalCode, sanitizedDataMethods);
     }
 
     /**
