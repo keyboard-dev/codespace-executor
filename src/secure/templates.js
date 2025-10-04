@@ -104,7 +104,8 @@ process.on('uncaughtException', (error) => {
 }
 
 const isolatedDataVariableGenerator = function (configCode) {
-    return `
+
+    const isolatedDataVariableCode = `
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
@@ -244,10 +245,13 @@ executeDataVariable().catch(error => {
     process.exit(1);
 });
 `;
+
+console.log("this is the isolated data variable code", isolatedDataVariableCode)
+return isolatedDataVariableCode;
 }
 
 const isolatedDataMethodCodeGenerator = function (resolvedConfig) {
-    return `const https = require('https');
+    const isolatedDataMethodCode = `const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 
@@ -385,6 +389,8 @@ executeDataMethod().catch(error => {
     process.exit(1);
 });
 `
+console.log("this is the isoldated data method code", isolatedDataMethodCode)
+return isolatedDataMethodCode
 }
 
 const globalCodeWithDataMethodsGenerator = function (globalCode, sanitizedDataMethods) {
@@ -506,9 +512,10 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught exception in global execution');
     process.exit(1);
 });`;
-
+    const finalFullCode = wrapperStart + globalCode + wrapperEnd;
+    console.log("this is the full code", finalFullCode)
     // Concatenate the parts to avoid template literal issues
-    return wrapperStart + globalCode + wrapperEnd;
+    return finalFullCode
 }
 
 

@@ -332,6 +332,7 @@ class SecureExecutor {
             const tempPath = path.join(this.tempDir, tempFile);
 
             // Wrap code to capture and filter results
+            const asyncTimeout = 5000
             const secureWrapper = secureWrapperGenerator(payload, asyncTimeout = 5000);
 
             try {
