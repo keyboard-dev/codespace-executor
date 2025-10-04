@@ -876,12 +876,14 @@ class SecureExecutor {
     }
 
     /**
-     * Get value from object using dot-notation path
+     * Get value from object using dot-notation path with array index support
      * @param {Object} obj - Object to get value from
-     * @param {String} path - Dot-notation path (e.g., "result.id" or "result.body.name")
+     * @param {String} path - Dot-notation path (e.g., "result.id" or "result.body.name" or "result.nodes[0].id")
      * @returns {*} - Value at path or undefined
      */
     getValueAtPath(obj, path) {
+        // Split path by dots, but preserve array bracket notation
+        // e.g., "result.data.nodes[0].id" -> ["result", "data", "nodes[0]", "id"]
         const parts = path.split('.');
         let current = obj;
 
@@ -889,7 +891,24 @@ class SecureExecutor {
             if (current === undefined || current === null) {
                 return undefined;
             }
-            current = current[part];
+
+            // Check if this part contains array index notation like "nodes[0]"
+            const arrayMatch = part.match(/^([^\[]+)\[(\d+)\]$/);
+            if (arrayMatch) {
+                // Extract property name and index: "nodes[0]" -> ["nodes", "0"]
+                const [, propName, index] = arrayMatch;
+                current = current[propName];
+
+                if (current === undefined || current === null) {
+                    return undefined;
+                }
+
+                // Access array element
+                current = current[parseInt(index, 10)];
+            } else {
+                // Normal property access
+                current = current[part];
+            }
         }
 
         return current;
