@@ -828,9 +828,15 @@ class SecureExecutor {
                 throw new Error(`Cannot interpolate ${fieldPath}: ${passed_from} has not been executed yet`);
             }
 
-            if (field_name?.startsWith("url")) field_name = `fetchOptions.${field_name}`
-            if (field_name?.startsWith("body")) field_name = `fetchOptions.${field_name}`
-            if (field_name?.startsWith("method")) field_name = `fetchOptions.${field_name}`
+            // Transform top-level fetchOptions fields to proper paths
+            // Only transform if it's EXACTLY "url", "body", or "method" at the top level
+            // This prevents false positives like "headers.body-hash" being transformed
+            if (field_name) {
+                const topLevelField = field_name.split('.')[0];
+                if (topLevelField === "url" || topLevelField === "body" || topLevelField === "method") {
+                    field_name = `fetchOptions.${field_name}`;
+                }
+            }
 
             // Extract the data from the dependency result
             // Result structure: { data: { status, headers, body, success }, ... }
@@ -860,18 +866,27 @@ class SecureExecutor {
         }
 
         // Replace only ${result.*} patterns, leave ${process.env.*} patterns for runtime
-        return template.replace(/\$\{result\.([^}]+)\}/g, (match, path) => {
-            // path = "id" or "body.name" (without the "result." prefix)
+        // Regex validates proper path format: letters, numbers, dots, brackets, underscores
+        return template.replace(/\$\{result\.([\w.\[\]]+)\}/g, (match, path) => {
+            // path = "id" or "body.name" or "items[0].id" (without the "result." prefix)
             const fullPath = 'result.' + path;
             const value = this.getValueAtPath(data, fullPath);
 
+            // Strict null/undefined check - these should error
             if (value === undefined || value === null) {
-                const error = `Interpolation failed: ${fullPath} is undefined. Available data: ${JSON.stringify(data, null, 2)}`;
+                const error = `Interpolation failed: ${fullPath} is ${value === null ? 'null' : 'undefined'}. Available data: ${JSON.stringify(data, null, 2)}`;
                 console.error(`❌ ${error}`);
                 throw new Error(error);
             }
 
-            return value;
+            // Handle different value types appropriately for string interpolation
+            if (typeof value === 'object') {
+                // Objects and arrays get JSON stringified
+                return JSON.stringify(value);
+            }
+
+            // Primitives (string, number, boolean) convert to string naturally
+            return String(value);
         });
     }
 
@@ -915,8 +930,8 @@ class SecureExecutor {
     }
 
     /**
-     * Set value in object using dot-notation path
-     * Supports nested paths like "headers.Authorization" or "body.user.id"
+     * Set value in object using dot-notation path with array index support
+     * Supports nested paths like "headers.Authorization", "body.user.id", or "body.users[0].id"
      * @param {Object} obj - Object to set value in
      * @param {String} path - Dot-notation path
      * @param {*} value - Value to set
@@ -929,18 +944,60 @@ class SecureExecutor {
         for (let i = 0; i < parts.length - 1; i++) {
             const part = parts[i];
 
-            // Create nested object if it doesn't exist
-            if (!(part in current) || typeof current[part] !== 'object') {
-                current[part] = {};
-            }
+            // Check if this part contains array index notation like "users[0]"
+            const arrayMatch = part.match(/^([^\[]+)\[(\d+)\]$/);
+            if (arrayMatch) {
+                const [, propName, index] = arrayMatch;
+                const arrayIndex = parseInt(index, 10);
 
-            current = current[part];
+                // Create array if it doesn't exist
+                if (!(propName in current)) {
+                    current[propName] = [];
+                }
+
+                // Ensure it's an array
+                if (!Array.isArray(current[propName])) {
+                    current[propName] = [];
+                }
+
+                // Create array element if it doesn't exist
+                if (!current[propName][arrayIndex]) {
+                    current[propName][arrayIndex] = {};
+                }
+
+                current = current[propName][arrayIndex];
+            } else {
+                // Create nested object if it doesn't exist
+                if (!(part in current) || typeof current[part] !== 'object') {
+                    current[part] = {};
+                }
+
+                current = current[part];
+            }
         }
 
-
-        // Set the final value
+        // Set the final value (handle array index in final key)
         const finalKey = parts[parts.length - 1];
-        current[finalKey] = value;
+        const finalArrayMatch = finalKey.match(/^([^\[]+)\[(\d+)\]$/);
+
+        if (finalArrayMatch) {
+            const [, propName, index] = finalArrayMatch;
+            const arrayIndex = parseInt(index, 10);
+
+            // Create array if it doesn't exist
+            if (!(propName in current)) {
+                current[propName] = [];
+            }
+
+            // Ensure it's an array
+            if (!Array.isArray(current[propName])) {
+                current[propName] = [];
+            }
+
+            current[propName][arrayIndex] = value;
+        } else {
+            current[finalKey] = value;
+        }
     }
 
     /**
@@ -1270,10 +1327,16 @@ class SecureExecutor {
         if (typeof obj === 'string') {
             // Check if this string contains interpolation markers
             if (obj.includes('${process.env.')) {
-                // Return as template literal for runtime interpolation
-                return '`' + obj + '`';
+                // Escape special characters before wrapping in template literal
+                // This prevents code injection and syntax errors
+                const escaped = obj
+                    .replace(/\\/g, '\\\\')    // Escape backslashes first
+                    .replace(/`/g, '\\`')       // Escape backticks
+                    .replace(/\$/g, '\\$');     // Escape dollar signs (prevents ${} interpolation)
+
+                return '`' + escaped + '`';
             }
-            // Regular string
+            // Regular string - JSON.stringify handles escaping automatically
             return JSON.stringify(obj);
         }
 
