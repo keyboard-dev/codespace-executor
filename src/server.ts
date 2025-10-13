@@ -104,7 +104,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
 
     // Serve index.html at root
     if (pathname === '/' && req.method === 'GET') {
-        const indexPath = path.join(__dirname, '../index.html');
+        const indexPath = path.join(__dirname, '../../index.html');
         fs.readFile(indexPath, (err, data) => {
             if (err) {
                 res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -117,7 +117,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
     }
     // API endpoint to list files in shareable_assets directory
     else if (pathname === '/files' && req.method === 'GET') {
-        const assetsDir = path.join(__dirname, '../shareable_assets');
+        const assetsDir = path.join(__dirname, '../../shareable_assets');
         
         fs.readdir(assetsDir, { withFileTypes: true }, (err, entries) => {
             if (err) {
