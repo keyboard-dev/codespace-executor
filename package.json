@@ -1,13 +1,19 @@
 {
   "name": "simple-node-server",
   "version": "1.0.0",
-  "description": "A simple Node.js server that responds with 'Hello World'.",
-  "main": "src/server.js",
+  "description": "A typescript server that allows keyboard to execute code'.",
+  "main": "src/server.ts",
   "scripts": {
-    "start": "npm install && node server.js",
-    "dev": "npm install && node setup-ollama.js && node server.js",
-    "serve": "node server.js",
+    "start": "npm install && npm run build && node dist/src/server.js",
+    "dev": "npm install && node setup-ollama.js && npm run build && node dist/src/server.js",
+    "dev:watch": "npm install && concurrently \"npm run build:watch\" \"nodemon dist/src/server.js\"",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "serve": "node dist/src/server.js",
+    "serve:legacy": "node server.js",
     "setup-ollama": "node setup-ollama.js",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
     "kill": "lsof -ti:3000 | xargs kill -9 || echo 'No process found on port 3000'"
   },
   "dependencies": {
@@ -21,5 +27,12 @@
     "ollama": "^0.5.0"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3",
+    "nodemon": "^3.0.2",
+    "concurrently": "^8.2.2",
+    "@types/express": "^4.17.21"
+  }
 }
