@@ -24,7 +24,9 @@
     "express": "^4.17.1",
     "googleapis": "^153.0.0",
     "octokit": "^5.0.3",
-    "ollama": "^0.5.0"
+    "ollama": "^0.5.0",
+    "@types/ws": "^8.5.9",
+    "ws": "^8.14.2"
   },
   "author": "",
   "license": "ISC",
