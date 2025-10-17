@@ -319,13 +319,13 @@ export class WebSocketServer {
               this.pendingCount = this.messages.filter(m => m.status === 'pending' || !m.status).length
               
               console.log(`✅ Updated message ${message.id} status to ${targetMessage.status}`)
-              
-              // Broadcast the updated message to other clients
-              this.broadcast({
+
+              // Broadcast the updated message to other clients (excluding sender)
+              this.broadcastToOthers({
                 type: 'websocket-message',
                 message: targetMessage,
                 timestamp: Date.now(),
-              })
+              }, ws)
             }
             else {
               console.warn(`⚠️ Message ${message.id} not found for approval response`)
@@ -334,18 +334,9 @@ export class WebSocketServer {
           }
 
           // Handle regular messages (convert WebSocketMessage to Message format)
-          if (message.type && message.data) {
-            const regularMessage: Message = {
-              id: message.id || crypto.randomBytes(16).toString('hex'),
-              type: message.type,
-              title: message.type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-              body: typeof message.data === 'string' ? message.data : JSON.stringify(message.data),
-              timestamp: message.timestamp || Date.now(),
-              priority: 'normal',
-              status: 'pending',
-              requiresResponse: true,
-            }
-            this.handleIncomingMessage(regularMessage)
+          if (message) {
+
+            this.handleIncomingMessage(message, ws)
             return
           }
 
@@ -391,6 +382,17 @@ export class WebSocketServer {
     }
   }
 
+  // Send a message to all clients except the sender
+  broadcastToOthers(message: unknown, sender: WebSocket): void {
+    if (this.wsServer) {
+      this.wsServer.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN && client !== sender) {
+          client.send(JSON.stringify(message))
+        }
+      })
+    }
+  }
+
   // Get WebSocket key info
   getWebSocketKeyInfo(): { key: string | null, createdAt: number | null, keyFile: string } {
     let createdAt: number | null = null
@@ -415,7 +417,7 @@ export class WebSocketServer {
   }
 
   // Handle incoming messages
-  private handleIncomingMessage(message: Message): void {
+  private handleIncomingMessage(message: any, sender?: WebSocket): void {
     // Add timestamp if not provided
     if (!message.timestamp) {
       message.timestamp = Date.now()
@@ -466,12 +468,21 @@ export class WebSocketServer {
     console.log(`📨 Stored message: ${message.title} (Status: ${message.status})`)
     console.log(`📊 Pending messages: ${this.pendingCount}`)
 
-    // Broadcast message to all connected clients
-    this.broadcast({
-      type: 'websocket-message',
-      message: message,
-      timestamp: Date.now(),
-    })
+    // Broadcast message to all connected clients except the sender
+    if (sender) {
+      this.broadcastToOthers({
+        type: 'websocket-message',
+        message: message,
+        timestamp: Date.now(),
+      }, sender)
+    } else {
+      // Fallback to broadcast if no sender provided
+      this.broadcast({
+        type: 'websocket-message',
+        message: message,
+        timestamp: Date.now(),
+      })
+    }
   }
 
   private handleApproveMessage(message: Message, feedback?: string): void {
