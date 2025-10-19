@@ -239,32 +239,20 @@ export class WebSocketServer {
               }))
               return
             }
-
-            // This would need to be implemented based on your provider system
-            const tokenResponse = {
-              type: 'provider-auth-token',
-              providerId: providerId,
-              token: null, // Implement provider token retrieval
-              timestamp: Date.now(),
-              requestId: message.requestId,
-              authenticated: false,
-              user: null,
-              providerName: providerId,
-            }
-            ws.send(JSON.stringify(tokenResponse))
+            this.broadcastToOthers({
+                ...message,
+                timestamp: Date.now(),
+            }, ws)
             return
           }
 
           // Handle provider status request
           if (message.type === 'request-provider-status') {
             // This would need to be implemented based on your provider system
-            const statusResponse = {
-              type: 'user-tokens-available',
-              tokensAvailable: [], // Implement provider status check
-              timestamp: Date.now(),
-              requestId: message.requestId,
-            }
-            ws.send(JSON.stringify(statusResponse))
+            this.broadcastToOthers({
+                ...message,
+                timestamp: Date.now(),
+            }, ws)
             return
           }
 
