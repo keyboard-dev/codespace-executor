@@ -150,6 +150,8 @@ export default class SecureExecutor {
         const enableSecureExecution = process.env.KEYBOARD_FULL_CODE_EXECUTION !== 'true';
 
         // If secure execution is disabled, use full execution
+        console.log("this the headers", headerEnvVars)
+        return this.executeCodeFull(payload, headerEnvVars, codeAnalysis);
         if (!enableSecureExecution) {
             return this.executeCodeFull(payload, headerEnvVars, codeAnalysis);
         }
