@@ -31,7 +31,6 @@ interface ProcessOptions {
     ai_eval?: boolean;
     encrypt_messages?: boolean;
     executionMode?: string;
-    codeAnalysis?: CodeAnalysis | null;
     skipOutputSanitization?: boolean;
 }
 
@@ -63,67 +62,6 @@ export default class SecureExecutor {
         }
     }
 
-    /**
-     * Analyze code to detect if it uses environment variables or external APIs
-     */
-    analyzeCodeSecurity(code: string): CodeAnalysis {
-        const securityPatterns = {
-            // Environment variable access
-            envAccess: /process\.env\./g,
-
-            // External API calls
-            fetch: /fetch\s*\(/g,
-            httpRequest: /https?\.(request|get|post)/g,
-            axios: /axios\./g,
-
-            // Node.js modules that might use env vars
-            nodeModules: /require\s*\(\s*['"`](https?|fs|path|os|crypto|child_process)['"`]\s*\)/g,
-
-            // Dynamic imports that might access env
-            dynamicImport: /import\s*\(/g,
-
-            // Console or process methods that might leak info
-            processAccess: /process\.(argv|cwd|exit|env)/g
-        };
-
-        const analysis: CodeAnalysis = {
-            hasEnvironmentAccess: false,
-            hasExternalApiCalls: false,
-            hasNodeModuleUsage: false,
-            riskLevel: 'low',
-            patterns: []
-        };
-
-        for (const [patternName, regex] of Object.entries(securityPatterns)) {
-            const matches = code.match(regex);
-            if (matches) {
-                analysis.patterns.push({
-                    type: patternName,
-                    matches: matches.length,
-                    samples: matches.slice(0, 3) // First 3 matches for debugging
-                });
-
-                if (patternName === 'envAccess' || patternName === 'processAccess') {
-                    analysis.hasEnvironmentAccess = true;
-                }
-                if (patternName === 'fetch' || patternName === 'httpRequest' || patternName === 'axios') {
-                    analysis.hasExternalApiCalls = true;
-                }
-                if (patternName === 'nodeModules' || patternName === 'dynamicImport') {
-                    analysis.hasNodeModuleUsage = true;
-                }
-            }
-        }
-
-        // Determine risk level
-        if (analysis.hasEnvironmentAccess && analysis.hasExternalApiCalls) {
-            analysis.riskLevel = 'high';
-        } else if (analysis.hasEnvironmentAccess || analysis.hasExternalApiCalls) {
-            analysis.riskLevel = 'medium';
-        }
-
-        return analysis;
-    }
 
     /**
      * Execute code with security isolation if needed
@@ -144,25 +82,8 @@ export default class SecureExecutor {
             throw new Error('No code provided to execute');
         }
 
-        const codeAnalysis = this.analyzeCodeSecurity(payload.code);
-
-        // Check environment variable at runtime for dynamic switching
-        const enableSecureExecution = process.env.KEYBOARD_FULL_CODE_EXECUTION !== 'true';
-
-        // If secure execution is disabled, use full execution
-        console.log("this the headers", headerEnvVars)
-        return this.executeCodeFull(payload, headerEnvVars, codeAnalysis);
-        if (!enableSecureExecution) {
-            return this.executeCodeFull(payload, headerEnvVars, codeAnalysis);
-        }
-
-        // If code doesn't access environment or external APIs, use normal execution
-        if (codeAnalysis.riskLevel === 'low') {
-            return this.executeCodeNormal(payload, headerEnvVars, codeAnalysis);
-        }
-
-        // High/medium risk code uses secure isolation
-        return this.executeCodeSecure(payload, headerEnvVars, codeAnalysis);
+        // Use full execution for simple code without structured API calls
+        return this.executeCodeFull(payload, headerEnvVars);
     }
 
     /**
@@ -305,7 +226,7 @@ export default class SecureExecutor {
     /**
      * Full execution mode (original behavior)
      */
-    async executeCodeFull(payload: ExecutionPayload, headerEnvVars: Record<string, string> = {}, codeAnalysis: CodeAnalysis | null = null): Promise<ExecutionResult> {
+    async executeCodeFull(payload: ExecutionPayload, headerEnvVars: Record<string, string> = {}): Promise<ExecutionResult> {
         return new Promise((resolve, reject) => {
             const tempFile = `temp_full_${Date.now()}_${randomBytes(8).toString('hex')}.js`;
             const tempPath = path.join(this.tempDir, tempFile);
@@ -358,8 +279,7 @@ export default class SecureExecutor {
                     env: limitedEnv,
                     ai_eval: payload.ai_eval || false,
                     encrypt_messages: payload.encrypt_messages || false,
-                    executionMode: 'full',
-                    codeAnalysis
+                    executionMode: 'full'
                 }).then(result => {
                     this.cleanup(tempPath);
                     resolve(result);
@@ -378,133 +298,8 @@ export default class SecureExecutor {
         });
     }
 
-    /**
-     * Normal execution for low-risk code
-     */
-    async executeCodeNormal(payload: ExecutionPayload, headerEnvVars: Record<string, string> = {}, codeAnalysis: CodeAnalysis | null = null): Promise<ExecutionResult> {
-        return this.executeCodeFull(payload, headerEnvVars, codeAnalysis);
-    }
 
-    /**
-     * Secure execution with environment isolation
-     */
-    async executeCodeSecure(payload: ExecutionPayload, headerEnvVars: Record<string, string> = {}, codeAnalysis: CodeAnalysis | null = null): Promise<ExecutionResult> {
-        return new Promise((resolve, reject) => {
-            const tempFile = `temp_secure_${Date.now()}_${randomBytes(8).toString('hex')}.js`;
-            const tempPath = path.join(this.tempDir, tempFile);
 
-            // Wrap code to capture and filter results
-            const asyncTimeout = 5000
-            const secureWrapper = secureWrapperGenerator(payload, asyncTimeout);
-
-            try {
-                fs.writeFileSync(tempPath, secureWrapper);
-
-                // Minimal environment for secure execution
-                const secureEnv: NodeJS.ProcessEnv = {
-                    PATH: process.env.PATH,
-                    NODE_ENV: process.env.NODE_ENV || 'production',
-                    TZ: process.env.TZ,
-                    LANG: process.env.LANG,
-                    PWD: process.env.PWD
-                };
-
-                // Only add specific required env vars based on analysis
-                if (codeAnalysis && codeAnalysis.hasEnvironmentAccess) {
-                    // Add only safe KEYBOARD env vars (not the full set)
-                    const safeKeyboardVars = ['KEYBOARD_PROVIDER_API_ENDPOINT'];
-                    Object.keys(process.env).forEach(key => {
-                        if (key.startsWith('KEYBOARD') && safeKeyboardVars.includes(key)) {
-                            secureEnv[key] = process.env[key];
-                        }
-                    });
-
-                    // Add specific header env vars if they're deemed safe
-                    if (headerEnvVars && typeof headerEnvVars === 'object') {
-                        Object.keys(headerEnvVars).forEach(key => {
-                            // Only add non-sensitive looking env vars
-                            if (!key.toLowerCase().includes('token') && !key.toLowerCase().includes('secret')) {
-                                secureEnv[key] = headerEnvVars[key];
-                            }
-                        });
-                    }
-                }
-
-                this.executeProcess('node', [tempPath], {
-                    timeout: payload.timeout || this.defaultTimeout,
-                    env: secureEnv,
-                    ai_eval: payload.ai_eval || false,
-                    encrypt_messages: payload.encrypt_messages || false,
-                    executionMode: 'secure',
-                    codeAnalysis
-                }).then(result => {
-                    // Parse and filter the secure execution result
-                    const filteredResult = this.filterSecureExecutionResult(result);
-                    this.cleanup(tempPath);
-                    resolve(filteredResult);
-                }).catch(error => {
-                    this.cleanup(tempPath);
-                    reject(error);
-                });
-
-            } catch (error: any) {
-                this.cleanup(tempPath);
-                reject({
-                    error: 'Failed to write secure temporary file',
-                    details: error.message
-                });
-            }
-        });
-    }
-
-    /**
-     * Filter results from secure execution to remove sensitive data
-     */
-    filterSecureExecutionResult(result: ExecutionResult): ExecutionResult {
-        try {
-            // Look for the secure execution result in stdout
-            const stdout = result.data?.stdout || '';
-            const secureResultMatch = stdout.match(/SECURE_EXECUTION_RESULT: (.+)/);
-
-            if (secureResultMatch) {
-                const capturedOutput = JSON.parse(secureResultMatch[1]);
-
-                // Return filtered, safe result
-                return {
-                    success: true,
-                    data: {
-                        stdout: this.sanitizeOutput(capturedOutput.stdout),
-                        stderr: this.sanitizeOutput(capturedOutput.stderr),
-                        result: capturedOutput.data,
-                        errors: capturedOutput.errors,
-                        code: result.data?.code || 0,
-                        executionTime: result.data?.executionTime,
-                        aiAnalysis: result.data?.aiAnalysis,
-                        executionMode: 'secure',
-                        securityFiltered: true
-                    }
-                };
-            }
-        } catch (parseError: any) {
-            // If parsing fails, return sanitized original result
-            console.error('Failed to parse secure execution result:', parseError.message);
-        }
-
-        // Fallback: return heavily sanitized version of original result
-        return {
-            success: result.success,
-            data: {
-                stdout: this.sanitizeOutput(result.data?.stdout || ''),
-                stderr: this.sanitizeOutput(result.data?.stderr || ''),
-                code: result.data?.code,
-                executionTime: result.data?.executionTime,
-                aiAnalysis: result.data?.aiAnalysis,
-                executionMode: 'secure',
-                securityFiltered: true,
-                fallback: true
-            }
-        };
-    }
 
     /**
      * Enhanced output sanitization for secure execution
@@ -594,8 +389,7 @@ export default class SecureExecutor {
                                     stderr : this.sanitizeOutput(stderr),
                                 code: code || 0,
                                 executionTime: Date.now(),
-                                executionMode: options.executionMode || 'normal',
-                                codeAnalysis: options.codeAnalysis || undefined
+                                executionMode: options.executionMode || 'normal'
                             }
                         };
 
