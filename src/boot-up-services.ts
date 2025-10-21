@@ -32,14 +32,6 @@ export class ServiceBootstrap {
     console.log('🚀 Booting up services...\n');
 
     const services: ServiceConfig[] = [
-      // Ollama setup service
-      {
-        name: 'Ollama Setup',
-        command: 'node',
-        args: ['setup-ollama.js'],
-        cwd: this.projectRoot,
-        stdio: 'pipe', // Capture output
-      },
       // WebSocket server
       {
         name: 'WebSocket Server',
