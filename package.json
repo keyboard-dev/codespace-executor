@@ -5,7 +5,7 @@
   "main": "src/server.ts",
   "scripts": {
     "start": "npm install && npm run build && node dist/src/server.js",
-    "dev": "npm install && node setup-ollama.js && npm run build && node dist/src/server.js",
+    "dev": "npm install && npm run build && node dist/src/server.js",
     "dev:watch": "npm install && concurrently \"npm run build:watch\" \"nodemon dist/src/server.js\"",
     "build": "tsc",
     "build:watch": "tsc --watch",

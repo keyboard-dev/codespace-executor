@@ -5,15 +5,16 @@ import path from 'path';
 import url from 'url';
 
 // Import converted modules
-import { 
-    retrievePackageJson, 
-    retrieveEnvironmentVariableKeys, 
+import {
+    retrievePackageJson,
+    retrieveEnvironmentVariableKeys,
     retrieveDocResources
 } from './retrieve_resources/index.js';
 import { encrypt, decrypt, safeObfuscate } from './utils/crypto.js';
 import LocalLLM from './local_llm/local.js';
 import JobManager from './jobs/JobManager.js';
 import SecureExecutor from './secure/SecureExecutor.js';
+import { bootUpServices, ServiceBootstrap } from './boot-up-services.js';
 
 // Import types
 import {
@@ -37,6 +38,9 @@ let jobManager: JobManager | null = null;
 
 // Secure execution system
 let secureExecutor: SecureExecutor | null = null;
+
+// Service bootstrap integration
+let serviceBootstrap: ServiceBootstrap | null = null;
 
 function getJobManager(): JobManager {
     if (!jobManager) {
@@ -1135,27 +1139,39 @@ const PORT = process.env.PORT || 3000;
 server.timeout = 600000; // 10 minutes in milliseconds
 server.headersTimeout = 610000; // Slightly longer than server timeout
 server.keepAliveTimeout = 605000; // Keep-alive timeout
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📋 Background job system initialized`);
-    
-    // 🎯 KEY: Start Ollama setup ONLY after server is confirmed running
+
+    // 🎯 Boot up additional services (Ollama, WebSocket, etc.)
+    try {
+        serviceBootstrap = await bootUpServices();
+        console.log(`🎉 All services booted successfully`);
+    } catch (error: any) {
+        console.error('⚠️  Failed to boot some services:', error.message);
+        console.log('📝 Server will continue running, but some features may be unavailable');
+    }
 });
 
 // Graceful shutdown handler
-function shutdown(): void {
+async function shutdown(): Promise<void> {
     console.log('🛑 Shutting down server...');
-    
+
+    // Shutdown services first
+    if (serviceBootstrap) {
+        await serviceBootstrap.shutdown();
+    }
+
     // Shutdown job manager
     if (jobManager) {
         jobManager.shutdown();
     }
-    
+
     server.close(() => {
         console.log('✅ Server shutdown complete');
         process.exit(0);
     });
-    
+
     // Force exit after 30 seconds
     setTimeout(() => {
         console.error('❌ Forced shutdown after timeout');
