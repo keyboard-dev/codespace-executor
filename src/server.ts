@@ -1,36 +1,55 @@
-const http = require('http');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const url = require('url');
-// const { createProject } = require('./src/project-generator/create');
-const { retrievePackageJson, retrieveEnvironmentVariableKeys, retrieveDocResources, checkIfResourcesAreValid } = require('./src/retrieve_resources');
-const { encrypt, decrypt, safeObfuscate } = require('./src/utils/crypto');
+import http from 'http';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import url from 'url';
+
+// Import converted modules
+import { 
+    retrievePackageJson, 
+    retrieveEnvironmentVariableKeys, 
+    retrieveDocResources
+} from './retrieve_resources/index.js';
+import { encrypt, decrypt, safeObfuscate } from './utils/crypto.js';
+import LocalLLM from './local_llm/local.js';
+import JobManager from './jobs/JobManager.js';
+import SecureExecutor from './secure/SecureExecutor.js';
+
+// Import types
+import {
+    ExecutionPayload,
+    JobOptions,
+    JobStatus,
+    HeaderEnvVars,
+    EncryptedResponse,
+    FileInfo,
+    JobResponse,
+    JobListResponse,
+    JobStatsResponse,
+    ExecutionOptions
+} from './types/index.js';
 
 // Local LLM integration
-const LocalLLM = require('./src/local_llm/local');
 const localLLM = new LocalLLM();
 
 // Job system integration
-const JobManager = require('./src/jobs/JobManager');
-let jobManager = null;
+let jobManager: JobManager | null = null;
 
 // Secure execution system
-const SecureExecutor = require('./src/secure/SecureExecutor');
-let secureExecutor = null;
+let secureExecutor: SecureExecutor | null = null;
 
-function getJobManager() {
+function getJobManager(): JobManager {
     if (!jobManager) {
         jobManager = new JobManager({
-            maxConcurrentJobs: process.env.MAX_CONCURRENT_JOBS || 5,
-            jobTTL: (process.env.JOB_TTL_HOURS || 24) * 60 * 60 * 1000,
+            maxConcurrentJobs: parseInt(process.env.MAX_CONCURRENT_JOBS || '5'),
+            jobTTL: (parseInt(process.env.JOB_TTL_HOURS || '24')) * 60 * 60 * 1000,
             enablePersistence: process.env.DISABLE_JOB_PERSISTENCE !== 'true'
         });
     }
     return jobManager;
 }
 
-function getSecureExecutor() {
+function getSecureExecutor(): SecureExecutor {
     if (!secureExecutor) {
         secureExecutor = new SecureExecutor({
             timeout: 30000
@@ -40,55 +59,52 @@ function getSecureExecutor() {
 }
 
 // Legacy Ollama integration (keeping for backward compatibility)
-let ollamaClient = null;
+let ollamaClient: any = null;
 try {
     const { Ollama } = require('ollama');
     ollamaClient = new Ollama({ host: 'http://localhost:11434' });
 } catch (error) {
-
+    // Ollama not available
 }
 
 // 🚀 NEW: Start Ollama setup in background AFTER server is running
-function startOllamaSetupInBackground() {
+// function startOllamaSetupInBackground(): void {
+//     try {
+//         const setupProcess = spawn('node', ['setup-ollama.js'], {
+//             detached: true,
+//             stdio: ['ignore', 'pipe', 'pipe'],
+//             cwd: __dirname
+//         });
+//         
+//         // Optional: Log setup output (but don't block server)
+//         setupProcess.stdout?.on('data', () => {
+//             // Silent background setup
+//         });
+//         
+//         setupProcess.stderr?.on('data', () => {
+//             // Silent background setup
+//         });
+//         
+//         setupProcess.on('close', () => {
+//             // Silent background setup
+//         });
+//         
+//         // Don't wait for the setup process - let it run independently
+//         setupProcess.unref();
+//         
+//     } catch (error) {
+//         // Don't fail server startup if Ollama setup fails
+//     }
+// }
 
-    
-    try {
-        const setupProcess = spawn('node', ['setup-ollama.js'], {
-            detached: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            cwd: __dirname
-        });
-        
-        // Optional: Log setup output (but don't block server)
-        setupProcess.stdout.on('data', (data) => {
-
-        });
-        
-        setupProcess.stderr.on('data', (data) => {
-
-        });
-        
-        setupProcess.on('close', (code) => {
-
-        });
-        
-        // Don't wait for the setup process - let it run independently
-        setupProcess.unref();
-        
-    } catch (error) {
-
-        // Don't fail server startup if Ollama setup fails
-    }
-}
-
-const server = http.createServer((req, res) => {
+const server = http.createServer((req: http.IncomingMessage, res: http.ServerResponse): void => {
     // Parse URL for better routing
-    const parsedUrl = url.parse(req.url, true);
+    const parsedUrl = url.parse(req.url || '', true);
     const pathname = parsedUrl.pathname;
 
     // Serve index.html at root
     if (pathname === '/' && req.method === 'GET') {
-        const indexPath = path.join(__dirname, 'index.html');
+        const indexPath = path.join(__dirname, '../../index.html');
         fs.readFile(indexPath, (err, data) => {
             if (err) {
                 res.writeHead(500, { 'Content-Type': 'text/plain' });
@@ -101,7 +117,7 @@ const server = http.createServer((req, res) => {
     }
     // API endpoint to list files in shareable_assets directory
     else if (pathname === '/files' && req.method === 'GET') {
-        const assetsDir = path.join(__dirname, 'shareable_assets');
+        const assetsDir = path.join(__dirname, '../../shareable_assets');
         
         fs.readdir(assetsDir, { withFileTypes: true }, (err, entries) => {
             if (err) {
@@ -115,7 +131,7 @@ const server = http.createServer((req, res) => {
                 .filter(entry => entry.isFile())
                 .map(entry => {
                     const filePath = path.join(assetsDir, entry.name);
-                    return new Promise((resolve) => {
+                    return new Promise<FileInfo | null>((resolve) => {
                         fs.stat(filePath, (err, stats) => {
                             if (err) {
                                 resolve(null);
@@ -132,7 +148,7 @@ const server = http.createServer((req, res) => {
                 });
 
             Promise.all(filePromises).then(files => {
-                const validFiles = files.filter(f => f !== null);
+                const validFiles = files.filter(f => f !== null) as FileInfo[];
                 res.writeHead(200, { 
                     'Content-Type': 'application/json',
                     'Access-Control-Allow-Origin': '*'
@@ -142,12 +158,12 @@ const server = http.createServer((req, res) => {
         });
     }
     // Serve static files from shareable_assets directory
-    else if (pathname.startsWith('/shareable_assets/') && req.method === 'GET') {
+    else if (pathname?.startsWith('/shareable_assets/') && req.method === 'GET') {
         const fileName = pathname.slice('/shareable_assets/'.length);
-        const filePath = path.join(__dirname, 'shareable_assets', fileName);
+        const filePath = path.join(__dirname, '../shareable_assets', fileName);
 
         // Security check to prevent directory traversal
-        if (!filePath.startsWith(path.join(__dirname, 'shareable_assets'))) {
+        if (!filePath.startsWith(path.join(__dirname, '../shareable_assets'))) {
             res.writeHead(403, { 'Content-Type': 'text/plain' });
             res.end('Forbidden');
             return;
@@ -160,7 +176,7 @@ const server = http.createServer((req, res) => {
             } else {
                 // Determine content type
                 const ext = path.extname(fileName).toLowerCase();
-                const contentTypes = {
+                const contentTypes: Record<string, string> = {
                     '.html': 'text/html',
                     '.css': 'text/css',
                     '.js': 'application/javascript',
@@ -186,9 +202,8 @@ const server = http.createServer((req, res) => {
     }
     else if (req.method === 'POST' && req.url === '/local-llm/initialize') {
         // Initialize Local LLM (start Ollama and ensure model is ready)
-        (async () => {
+        (async (): Promise<void> => {
             try {
-
                 const success = await localLLM.initialize();
                 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -197,7 +212,7 @@ const server = http.createServer((req, res) => {
                     message: success ? 'Local LLM initialized successfully' : 'Failed to initialize Local LLM',
                     status: await localLLM.getStatus()
                 }));
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     success: false,
@@ -207,12 +222,12 @@ const server = http.createServer((req, res) => {
         })();
     } else if (req.method === 'GET' && req.url === '/local-llm/status') {
         // Get Local LLM status
-        (async () => {
+        (async (): Promise<void> => {
             try {
                 const status = await localLLM.getStatus();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(status));
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     error: error.message
@@ -225,13 +240,13 @@ const server = http.createServer((req, res) => {
         req.on('data', chunk => {
             body += chunk.toString();
         });
-        req.on('end', async () => {
+        req.on('end', async (): Promise<void> => {
             try {
                 const { message, temperature, model } = JSON.parse(body);
                 
                 if (!message) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Message is required' }));
+                    res.end(JSON.stringify({ error: 'Message is required' }));
                 }
 
                 const response = await localLLM.chat(message, { temperature, model });
@@ -239,7 +254,7 @@ const server = http.createServer((req, res) => {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(response));
 
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     success: false,
@@ -249,7 +264,7 @@ const server = http.createServer((req, res) => {
         });
     } else if (req.method === 'POST' && req.url === '/local-llm/stop') {
         // Stop Local LLM service
-        (async () => {
+        (async (): Promise<void> => {
             try {
                 const success = await localLLM.stop();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -257,7 +272,7 @@ const server = http.createServer((req, res) => {
                     success: success,
                     message: success ? 'Local LLM stopped successfully' : 'Failed to stop Local LLM'
                 }));
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     success: false,
@@ -271,18 +286,18 @@ const server = http.createServer((req, res) => {
         req.on('data', chunk => {
             body += chunk.toString();
         });
-        req.on('end', async () => {
+        req.on('end', async (): Promise<void> => {
             try {
                 if (!ollamaClient) {
                     res.writeHead(503, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Ollama service not available' }));
+                    res.end(JSON.stringify({ error: 'Ollama service not available' }));
                 }
 
-                const { message, model = 'gemma3:1b', stream = false } = JSON.parse(body);
+                const { message, model = 'gemma3:1b' } = JSON.parse(body);
                 
                 if (!message) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Message is required' }));
+                    res.end(JSON.stringify({ error: 'Message is required' }));
                 }
 
                 const response = await ollamaClient.chat({
@@ -298,7 +313,7 @@ const server = http.createServer((req, res) => {
                     model: model
                 }));
 
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     error: 'Failed to chat with Ollama',
@@ -308,11 +323,11 @@ const server = http.createServer((req, res) => {
         });
     } else if (req.method === 'GET' && req.url === '/ollama/status') {
         // Legacy Ollama status endpoint (updated for gemma3:1b)
-        (async () => {
+        (async (): Promise<void> => {
             try {
                 if (!ollamaClient) {
                     res.writeHead(503, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ 
+                    res.end(JSON.stringify({ 
                         ollamaAvailable: false,
                         error: 'Ollama client not initialized'
                     }));
@@ -320,17 +335,17 @@ const server = http.createServer((req, res) => {
 
                 // Try to get list of models to check if service is running
                 const models = await ollamaClient.list();
-                const gemmaAvailable = models.models.some(model => model.name.includes('gemma3'));
+                const gemmaAvailable = models.models.some((model: any) => model.name.includes('gemma3'));
 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     ollamaAvailable: true,
                     gemmaAvailable: gemmaAvailable,
-                    models: models.models.map(m => m.name),
+                    models: models.models.map((m: any) => m.name),
                     apiUrl: 'http://localhost:11434'
                 }));
 
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
                     ollamaAvailable: false,
@@ -345,7 +360,7 @@ const server = http.createServer((req, res) => {
             body += chunk.toString();
         });
 
-        req.on('end', async () => {
+        req.on('end', async (): Promise<void> => {
             try {
                 const projectConfig = JSON.parse(body);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -353,7 +368,7 @@ const server = http.createServer((req, res) => {
                     message: 'Project created successfully',
                     projectPath: `codebases_projects/${projectConfig.title.toLowerCase().replace(/\s+/g, '-')}`
                 }));
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
                     error: 'Failed to create project',
@@ -368,9 +383,9 @@ const server = http.createServer((req, res) => {
             body += chunk.toString();
         });
         
-        req.on('end', async () => {
+        req.on('end', async (): Promise<void> => {
             try {
-                const payload = JSON.parse(body);
+                JSON.parse(body); // Parse to validate JSON format
                 const packageJson = await retrievePackageJson();
                 const environmentVariableKeys = await retrieveEnvironmentVariableKeys();
                 const docResources = await retrieveDocResources();
@@ -380,7 +395,7 @@ const server = http.createServer((req, res) => {
                     "environmentVariableKeys": environmentVariableKeys,
                     "docResources": docResources,
                 }));
-            } catch (error) {
+            } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ 
                     error: 'Failed to retrieve package.json and environment variable keys',
@@ -393,7 +408,7 @@ const server = http.createServer((req, res) => {
         let body = '';
 
         // Extract x-keyboard-provider-user-token-for-* headers
-        const headerEnvVars = {};
+        const headerEnvVars: HeaderEnvVars = {};
         if (req.headers) {
             Object.keys(req.headers).forEach(headerName => {
                 // Check if this is an x-keyboard-provider-user-token-for- header
@@ -406,8 +421,10 @@ const server = http.createServer((req, res) => {
                         .toUpperCase()
                         .replace(/-/g, '_'); // Replace hyphens with underscores
                     
-                    headerEnvVars[envVarName] = req.headers[headerName];
-
+                    const headerValue = req.headers[headerName];
+                    if (typeof headerValue === 'string') {
+                        headerEnvVars[envVarName] = headerValue;
+                    }
                 }
             });
         }
@@ -416,9 +433,9 @@ const server = http.createServer((req, res) => {
             body += chunk.toString();
         });
 
-        req.on('end', async() => {
+        req.on('end', async (): Promise<void> => {
             try {
-                const payload = JSON.parse(body);
+                const payload: ExecutionPayload = JSON.parse(body);
                 console.log("this is the payload", payload)
                 // Handle encryption if encrypt_messages is true
                 if (payload.encrypt_messages) {
@@ -426,7 +443,7 @@ const server = http.createServer((req, res) => {
                         // Check if KB_ENCRYPTION_SECRET is available
                         if (!process.env.KB_ENCRYPTION_SECRET) {
                             res.writeHead(400, { 'Content-Type': 'application/json' });
-                            return res.end(JSON.stringify({ 
+                            res.end(JSON.stringify({ 
                                 error: 'KB_ENCRYPTION_SECRET environment variable is required when encrypt_messages is true' 
                             }));
                         }
@@ -435,20 +452,19 @@ const server = http.createServer((req, res) => {
                         if (payload.code) {
                             try {
                                 payload.code = decrypt(payload.code);
-
-                            } catch (decryptError) {
+                            } catch (decryptError: any) {
                                 console.error('❌ Failed to decrypt code:', decryptError.message);
                                 res.writeHead(400, { 'Content-Type': 'application/json' });
-                                return res.end(JSON.stringify({ 
+                                res.end(JSON.stringify({ 
                                     error: 'Failed to decrypt code', 
                                     details: decryptError.message 
                                 }));
                             }
                         }
-                    } catch (encryptionError) {
+                    } catch (encryptionError: any) {
                         console.error('❌ Encryption setup error:', encryptionError.message);
                         res.writeHead(500, { 'Content-Type': 'application/json' });
-                        return res.end(JSON.stringify({ 
+                        res.end(JSON.stringify({ 
                             error: 'Encryption setup failed', 
                             details: encryptionError.message 
                         }));
@@ -458,7 +474,7 @@ const server = http.createServer((req, res) => {
                 // const areResourcesValid = await checkIfResourcesAreValid(payload);
                 // if (!areResourcesValid) {
                 //     res.writeHead(400, { 'Content-Type': 'application/json' });
-                //     return res.end(JSON.stringify({ error: 'Resources are not valid, make sure you have the correct environment variables and doc resources before trying to execute' }));
+                //     res.end(JSON.stringify({ error: 'Resources are not valid, make sure you have the correct environment variables and doc resources before trying to execute' }));
                 // }
 
                 if (payload.code || payload.Global_code) {
@@ -471,7 +487,7 @@ const server = http.createServer((req, res) => {
                                 headerEnvVars
                             };
                             
-                            const jobOptions = {
+                            const jobOptions: JobOptions = {
                                 priority: payload.priority || 'normal',
                                 timeout: payload.timeout || 600000, // 10 minutes default for background jobs
                                 maxRetries: payload.maxRetries || 0
@@ -479,7 +495,7 @@ const server = http.createServer((req, res) => {
                             
                             const jobId = getJobManager().createJob(jobPayload, jobOptions);
                             
-                            let response = {
+                            let response: any = {
                                 success: true,
                                 background: true,
                                 jobId: jobId,
@@ -495,14 +511,14 @@ const server = http.createServer((req, res) => {
                                         encrypted: true,
                                         data: encryptedResponse
                                     };
-                                } catch (encryptError) {
+                                } catch (encryptError: any) {
                                     response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
                                 }
                             }
                             
                             res.writeHead(201, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify(response));
-                        } catch (error) {
+                        } catch (error: any) {
                             console.error('❌ Error creating background job:', error);
                             res.writeHead(500, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify({
@@ -518,13 +534,13 @@ const server = http.createServer((req, res) => {
                     }
                 } else if (payload.command) {
                     // Handle command execution
-                    const [cmd, ...args] = payload.command.split(' ');
+                    const [cmd, ...args] = (payload.command || '').split(' ');
                     executeProcess(cmd, args, res);
                 } else {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ error: 'Either code or command is required' }));
+                    res.end(JSON.stringify({ error: 'Either code or command is required' }));
                 }
-            } catch (err) {
+            } catch (err: any) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'Looks there was an error did you review or look at docs before executing this request?' }));
             }
@@ -539,12 +555,12 @@ const server = http.createServer((req, res) => {
         });
         req.on('end', () => {
             try {
-                const payload = JSON.parse(body);
+                const payload: ExecutionPayload = JSON.parse(body);
                 
                 // Validate required fields
                 if (!payload.code && !payload.command) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({
+                    res.end(JSON.stringify({
                         error: 'Either code or command is required'
                     }));
                 }
@@ -554,7 +570,7 @@ const server = http.createServer((req, res) => {
                     try {
                         if (!process.env.KB_ENCRYPTION_SECRET) {
                             res.writeHead(400, { 'Content-Type': 'application/json' });
-                            return res.end(JSON.stringify({
+                            res.end(JSON.stringify({
                                 error: 'KB_ENCRYPTION_SECRET environment variable is required when encrypt_messages is true'
                             }));
                         }
@@ -562,17 +578,17 @@ const server = http.createServer((req, res) => {
                         if (payload.code) {
                             try {
                                 payload.code = decrypt(payload.code);
-                            } catch (decryptError) {
+                            } catch (decryptError: any) {
                                 res.writeHead(400, { 'Content-Type': 'application/json' });
-                                return res.end(JSON.stringify({
+                                res.end(JSON.stringify({
                                     error: 'Failed to decrypt code',
                                     details: decryptError.message
                                 }));
                             }
                         }
-                    } catch (encryptionError) {
+                    } catch (encryptionError: any) {
                         res.writeHead(500, { 'Content-Type': 'application/json' });
-                        return res.end(JSON.stringify({
+                        res.end(JSON.stringify({
                             error: 'Encryption setup failed',
                             details: encryptionError.message
                         }));
@@ -580,7 +596,7 @@ const server = http.createServer((req, res) => {
                 }
                 
                 // Extract headers for environment variables
-                const headerEnvVars = {};
+                const headerEnvVars: HeaderEnvVars = {};
                 if (req.headers) {
                     Object.keys(req.headers).forEach(headerName => {
                         if (headerName.toLowerCase().startsWith('x-keyboard-provider-user-token-for-')) {
@@ -589,7 +605,10 @@ const server = http.createServer((req, res) => {
                                 .replace('x-', '')
                                 .toUpperCase()
                                 .replace(/-/g, '_');
-                            headerEnvVars[envVarName] = req.headers[headerName];
+                            const headerValue = req.headers[headerName];
+                            if (typeof headerValue === 'string') {
+                                headerEnvVars[envVarName] = headerValue;
+                            }
                         }
                     });
                 }
@@ -600,7 +619,7 @@ const server = http.createServer((req, res) => {
                     headerEnvVars
                 };
                 
-                const jobOptions = {
+                const jobOptions: JobOptions = {
                     priority: payload.priority || 'normal',
                     timeout: payload.timeout || 600000, // 10 minutes default for background jobs
                     maxRetries: payload.maxRetries || 0
@@ -608,7 +627,7 @@ const server = http.createServer((req, res) => {
                 
                 const jobId = getJobManager().createJob(jobPayload, jobOptions);
                 
-                let response = {
+                let response: any = {
                     success: true,
                     jobId: jobId,
                     status: 'PENDING',
@@ -623,7 +642,7 @@ const server = http.createServer((req, res) => {
                             encrypted: true,
                             data: encryptedResponse
                         };
-                    } catch (encryptError) {
+                    } catch (encryptError: any) {
                         response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
                     }
                 }
@@ -631,7 +650,7 @@ const server = http.createServer((req, res) => {
                 res.writeHead(201, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(response));
                 
-            } catch (error) {
+            } catch (error: any) {
                 console.error('❌ Error creating job:', error);
                 res.writeHead(500, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
@@ -642,14 +661,14 @@ const server = http.createServer((req, res) => {
             }
         });
     
-    } else if (req.method === 'GET' && req.url.startsWith('/jobs/')) {
+    } else if (req.method === 'GET' && req.url?.startsWith('/jobs/')) {
         // Get specific job status
         const pathParts = req.url.split('/');
         const jobId = pathParts[2]?.split('?')[0]; // Handle query params
         
         if (!jobId || jobId === 'stats') {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Job ID is required' }));
+            res.end(JSON.stringify({ error: 'Job ID is required' }));
         }
         
         try {
@@ -659,7 +678,7 @@ const server = http.createServer((req, res) => {
             const job = getJobManager().getJob(jobId);
             
             if (!job) {
-                let response = { error: 'Job not found' };
+                let response: any = { error: 'Job not found' };
                 if (encryptMessages) {
                     try {
                         const responseString = JSON.stringify(response);
@@ -668,17 +687,17 @@ const server = http.createServer((req, res) => {
                             encrypted: true,
                             data: encryptedResponse
                         };
-                    } catch (encryptError) {
+                    } catch (encryptError: any) {
                         response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
                     }
                 }
                 
                 res.writeHead(404, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify(response));
+                res.end(JSON.stringify(response));
             }
             
             // Create response with obfuscated sensitive data
-            const jobResponse = {
+            const jobResponse: JobResponse = {
                 id: job.id,
                 status: job.status,
                 progress: job.progress,
@@ -702,13 +721,13 @@ const server = http.createServer((req, res) => {
                 jobResponse.error = {
                     message: job.error.message,
                     type: job.error.type,
-                    code: job.error.code,
+                    code: job.error.code as any,
                     stdout: safeObfuscate(job.error.stdout),
                     stderr: safeObfuscate(job.error.stderr)
                 };
             }
             
-            let response = {
+            let response: any = {
                 success: true,
                 job: jobResponse
             };
@@ -721,7 +740,7 @@ const server = http.createServer((req, res) => {
                         encrypted: true,
                         data: encryptedResponse
                     };
-                } catch (encryptError) {
+                } catch (encryptError: any) {
                     response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
                 }
             }
@@ -729,7 +748,7 @@ const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(response));
             
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Error getting job:', error);
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -739,14 +758,14 @@ const server = http.createServer((req, res) => {
             }));
         }
     
-    } else if (req.method === 'GET' && req.url.startsWith('/jobs')) {
+    } else if (req.method === 'GET' && req.url?.startsWith('/jobs')) {
         // List all jobs
         try {
             const url = new URL(req.url, `http://${req.headers.host}`);
             const options = {
-                status: url.searchParams.get('status'),
-                limit: Math.min(parseInt(url.searchParams.get('limit')) || 100, 1000),
-                offset: parseInt(url.searchParams.get('offset')) || 0
+                status: url.searchParams.get('status') as JobStatus | null,
+                limit: Math.min(parseInt(url.searchParams.get('limit') || '100') || 100, 1000),
+                offset: parseInt(url.searchParams.get('offset') || '0') || 0
             };
             const encryptMessages = url.searchParams.get('encrypt_messages') === 'true';
             
@@ -766,7 +785,7 @@ const server = http.createServer((req, res) => {
                 hasError: job.status === 'FAILED' && !!job.error
             }));
             
-            let response = {
+            let response: JobListResponse = {
                 success: true,
                 jobs: sanitizedJobs,
                 pagination: {
@@ -784,16 +803,16 @@ const server = http.createServer((req, res) => {
                     response = {
                         encrypted: true,
                         data: encryptedResponse
-                    };
-                } catch (encryptError) {
-                    response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                    } as any;
+                } catch (encryptError: any) {
+                    (response as any).encryptionError = 'Failed to encrypt response: ' + encryptError.message;
                 }
             }
             
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(response));
             
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Error listing jobs:', error);
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -803,14 +822,14 @@ const server = http.createServer((req, res) => {
             }));
         }
     
-    } else if (req.method === 'DELETE' && req.url.startsWith('/jobs/')) {
+    } else if (req.method === 'DELETE' && req.url?.startsWith('/jobs/')) {
         // Cancel/delete specific job
         const pathParts = req.url.split('/');
         const jobId = pathParts[2];
         
         if (!jobId) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Job ID is required' }));
+            res.end(JSON.stringify({ error: 'Job ID is required' }));
         }
         
         try {
@@ -818,11 +837,11 @@ const server = http.createServer((req, res) => {
             
             if (!job) {
                 res.writeHead(404, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: 'Job not found' }));
+                res.end(JSON.stringify({ error: 'Job not found' }));
             }
             
-            let result;
-            let message;
+            let result: any;
+            let message: string;
             if (job.status === 'RUNNING' || job.status === 'PENDING') {
                 // Cancel the job
                 result = getJobManager().cancelJob(jobId);
@@ -844,7 +863,7 @@ const server = http.createServer((req, res) => {
                 }
             }));
             
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Error deleting job:', error);
             const statusCode = error.message.includes('not found') ? 404 : 500;
             res.writeHead(statusCode, { 'Content-Type': 'application/json' });
@@ -863,8 +882,8 @@ const server = http.createServer((req, res) => {
             res.end(JSON.stringify({
                 success: true,
                 stats: stats
-            }));
-        } catch (error) {
+            } as JobStatsResponse));
+        } catch (error: any) {
             console.error('❌ Error getting job stats:', error);
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -881,13 +900,17 @@ const server = http.createServer((req, res) => {
 });
 
 // New secure execution function with feature flag support
-async function executeCodeWithSecureMode(payload, res, headerEnvVars = {}) {
+async function executeCodeWithSecureMode(
+    payload: ExecutionPayload, 
+    res: http.ServerResponse, 
+    headerEnvVars: HeaderEnvVars = {}
+): Promise<void> {
     try {
         const executor = getSecureExecutor();
         const result = await executor.executeCode(payload, headerEnvVars);
 
         // Handle encryption if requested
-        let finalResult = result;
+        let finalResult: any = result;
         if (payload.encrypt_messages) {
             try {
                 const responseString = JSON.stringify(result);
@@ -896,19 +919,19 @@ async function executeCodeWithSecureMode(payload, res, headerEnvVars = {}) {
                     encrypted: true,
                     data: encryptedResponse
                 };
-            } catch (encryptError) {
+            } catch (encryptError: any) {
                 console.error('❌ Failed to encrypt response:', encryptError.message);
-                finalResult.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                (finalResult as any).encryptionError = 'Failed to encrypt response: ' + encryptError.message;
             }
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(finalResult));
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('❌ Secure execution error:', error);
 
-        let errorResult = {
+        let errorResult: any = {
             success: false,
             error: error.error || 'Execution failed',
             details: error.details || error.message,
@@ -924,7 +947,7 @@ async function executeCodeWithSecureMode(payload, res, headerEnvVars = {}) {
                     encrypted: true,
                     data: encryptedError
                 };
-            } catch (encryptError) {
+            } catch (encryptError: any) {
                 console.error('❌ Failed to encrypt error response:', encryptError.message);
                 errorResult.encryptionError = 'Failed to encrypt error response: ' + encryptError.message;
             }
@@ -935,157 +958,22 @@ async function executeCodeWithSecureMode(payload, res, headerEnvVars = {}) {
     }
 }
 
-// Enhanced code execution function with better async support (LEGACY - kept for reference)
-async function executeCodeWithAsyncSupport(payload, res, headerEnvVars = {}) {
-    const tempFile = `temp_${Date.now()}.js`;
-    let codeToExecute = payload.code;
-    
-    // Check if code needs async wrapper
-    const needsAsyncWrapper = codeToExecute.includes('await') || 
-                             codeToExecute.includes('Promise') ||
-                             codeToExecute.includes('.then(') ||
-                             codeToExecute.includes('setTimeout') ||
-                             codeToExecute.includes('setInterval') ||
-                             codeToExecute.includes('https.request') ||
-                             codeToExecute.includes('fetch(');
-    
-    if (needsAsyncWrapper) {
-        // Configurable async timeout - default 5 seconds for API calls
-        const asyncTimeout = payload.asyncTimeout || 5000;
-        
-        // Wrap in async IIFE and add proper exit handling
-        codeToExecute = `
-(async () => {
-    try {
-        ${payload.code}
-        
-        // Wait for any pending async operations (configurable timeout)
-        await new Promise(resolve => setTimeout(resolve, ${asyncTimeout}));
-        
-    } catch (error) {
-        console.error('❌ Execution error:', error.message);
-        console.error('❌ Error type:', error.constructor.name);
-        console.error('❌ Stack trace:', error.stack);
-        
-        // Try to log additional error details
-        if (error.code) console.error('❌ Error code:', error.code);
-        if (error.errno) console.error('❌ Error number:', error.errno);
-        if (error.syscall) console.error('❌ System call:', error.syscall);
-        
-        process.exit(1);
-    }
-})().then(() => {
-    // Give a moment for any final logs
-    setTimeout(() => {
-
-        process.exit(0);
-    }, 200);
-}).catch(error => {
-    console.error('❌ Promise rejection:', error.message);
-    console.error('❌ Promise rejection stack:', error.stack);
-    process.exit(1);
-});
-
-// Handle unhandled promise rejections with more details
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Promise Rejection at:', promise);
-    console.error('❌ Reason:', reason);
-    if (reason && reason.stack) {
-        console.error('❌ Stack:', reason.stack);
-    }
-    process.exit(1);
-});
-
-// Handle uncaught exceptions with more details
-process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error.message);
-    console.error('❌ Exception stack:', error.stack);
-    console.error('❌ Exception type:', error.constructor.name);
-    process.exit(1);
-});
-`;
-    }
-    
-    try {
-        fs.writeFileSync(tempFile, codeToExecute);
-        const allowedEnvVars = [
-            'PATH',
-            'HOME',
-            'USER',
-            'NODE_ENV',
-            'TZ',
-            'LANG',
-            'LC_ALL',
-            'PWD',
-            'TMPDIR',
-            'TEMP',
-            'TMP'
-        ];
-        
-        // Create limited environment with only allowed variables
-        const limitedEnv = {};
-        
-        // Add basic allowed environment variables
-        allowedEnvVars.forEach(key => {
-            if (process.env[key]) {
-                limitedEnv[key] = process.env[key];
-            }
-        });
-        
-        // Add all environment variables that start with "KEYBOARD"
-        Object.keys(process.env).forEach(key => {
-            if (key.startsWith('KEYBOARD')) {
-                limitedEnv[key] = process.env[key];
-            }
-        });
-
-        // Add extracted headers as environment variables
-        if (headerEnvVars && typeof headerEnvVars === 'object') {
-            Object.keys(headerEnvVars).forEach(key => {
-                limitedEnv[key] = headerEnvVars[key];
-
-            });
-        }
-        
-        // Enhanced execution with timeout
-        executeProcessWithTimeout('node', [tempFile], res, () => {
-            try {
-                fs.unlinkSync(tempFile);
-            } catch (e) {
-                // File might already be deleted
-            }
-        }, {
-            timeout: payload.timeout || 30000, // 30 second default timeout
-            env: { ...limitedEnv }, // Allow custom environment variables
-            ai_eval: payload.ai_eval || false, // Enable AI evaluation of output
-            encrypt_messages: payload.encrypt_messages || false // Enable response encryption
-        });
-        
-    } catch (error) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ 
-            error: 'Failed to write temporary file',
-            details: error.message 
-        }));
-    }
-}
+// Enhanced code execution function with better async support (LEGACY - removed for now)
 
 // Enhanced process execution with timeout and better error handling
-function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {}) {
+function executeProcessWithTimeout(
+    cmd: string, 
+    args: string[], 
+    res: http.ServerResponse, 
+    cleanup: (() => void) | null = null, 
+    options: ExecutionOptions = {}
+): void {
     const timeout = options.timeout || 30000;
-    
-    // Define allowed environment variables for security
-
-    
-    // Allow specific custom env vars from payload if they're safe
-    const safeCustomEnvVars = ['NODE_OPTIONS', 'DEBUG'];
-
     
     const child = spawn(cmd, args, { env: options?.env || {}});
     let stdout = '';
     let stderr = '';
     let isCompleted = false;
-    
     
     // Set up timeout
     const timeoutId = setTimeout(() => {
@@ -1095,7 +983,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             
             if (cleanup) cleanup();
             
-            let timeoutResult = { 
+            let timeoutResult: any = { 
                 error: 'Execution timeout',
                 timeout: timeout,
                 stdout: safeObfuscate(stdout),
@@ -1112,8 +1000,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                         encrypted: true,
                         data: encryptedTimeout
                     };
-
-                } catch (encryptError) {
+                } catch (encryptError: any) {
                     console.error('❌ Failed to encrypt timeout response:', encryptError.message);
                     // Fall back to unencrypted timeout response with error indication
                     timeoutResult.encryptionError = 'Failed to encrypt timeout response: ' + encryptError.message;
@@ -1125,11 +1012,11 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
         }
     }, timeout);
     
-    child.stdout.on('data', data => {
+    child.stdout?.on('data', data => {
         stdout += data.toString();
     });
 
-    child.stderr.on('data', data => {
+    child.stderr?.on('data', data => {
         stderr += data.toString();
     });
 
@@ -1139,7 +1026,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             clearTimeout(timeoutId);
             
             if (cleanup) cleanup();
-            let aiAnalysis;
+            let aiAnalysis: any;
             console.log(options)
             if(options.ai_eval) {
                 try {
@@ -1160,7 +1047,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                 }
             }
 
-            let finalResult;
+            let finalResult: any;
             try {
                finalResult = { 
                 success: true,
@@ -1183,8 +1070,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                         encrypted: true,
                         data: encryptedResponse
                     };
-
-                } catch (encryptError) {
+                } catch (encryptError: any) {
                     console.error('❌ Failed to encrypt response:', encryptError.message);
                     // Fall back to unencrypted response with error indication
                     finalResult.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
@@ -1206,12 +1092,12 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
             
             if (cleanup) cleanup();
             
-            let errorResult = { 
+            let errorResult: any = { 
                 success: false,
                 error: {
                     message: error.message,
                     type: error.constructor.name,
-                    code: error.code,
+                    code: (error as any).code,
                     stdout: safeObfuscate(stdout),
                     stderr: safeObfuscate(stderr)
                 }
@@ -1226,8 +1112,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
                         encrypted: true,
                         data: encryptedError
                     };
-
-                } catch (encryptError) {
+                } catch (encryptError: any) {
                     console.error('❌ Failed to encrypt error response:', encryptError.message);
                     // Fall back to unencrypted error response with error indication
                     errorResult.encryptionError = 'Failed to encrypt error response: ' + encryptError.message;
@@ -1241,7 +1126,7 @@ function executeProcessWithTimeout(cmd, args, res, cleanup = null, options = {})
 }
 
 // Original helper function for backward compatibility
-function executeProcess(cmd, args, res, cleanup = null) {
+function executeProcess(cmd: string, args: string[], res: http.ServerResponse, cleanup: (() => void) | null = null): void {
     executeProcessWithTimeout(cmd, args, res, cleanup);
 }
 
@@ -1258,7 +1143,7 @@ server.listen(PORT, () => {
 });
 
 // Graceful shutdown handler
-function shutdown() {
+function shutdown(): void {
     console.log('🛑 Shutting down server...');
     
     // Shutdown job manager

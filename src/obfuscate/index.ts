@@ -1,8 +1,8 @@
-function obfuscateSensitiveData(input) {
+export function obfuscateSensitiveData(input: any): string {
     if (!input) return input;
     
     // Convert objects to strings for processing
-    let str;
+    let str: string;
     if (typeof input === 'object') {
         try {
             str = JSON.stringify(input, null, 2);
@@ -59,7 +59,3 @@ function obfuscateSensitiveData(input) {
     
     return str;
 }
-
-module.exports = {
-    obfuscateSensitiveData
-};

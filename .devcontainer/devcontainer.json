@@ -1,6 +1,6 @@
 {
     "postCreateCommand": "npm install",
-    "postStartCommand": "npm run start",
+    "postStartCommand": "npm run dev",
     "forwardPorts": [3000, 3001, 11434],
     "customizations": {
         "vscode": {

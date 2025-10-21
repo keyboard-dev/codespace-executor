@@ -1,0 +1,21 @@
+{
+  "name": "secure-execution-schemas",
+  "version": "1.0.0",
+  "description": "Zod schemas and validation helpers for Secure Two-Phase Code Execution API",
+  "main": "secure-execution-schema.js",
+  "keywords": [
+    "security",
+    "api",
+    "validation",
+    "zod",
+    "mcp",
+    "credentials",
+    "isolation"
+  ],
+  "dependencies": {
+    "zod": "^3.22.0"
+  },
+  "peerDependencies": {
+    "zod": "^3.22.0"
+  }
+}
