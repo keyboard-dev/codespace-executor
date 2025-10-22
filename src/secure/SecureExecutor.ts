@@ -30,6 +30,7 @@ interface ProcessOptions {
     env?: NodeJS.ProcessEnv;
     ai_eval?: boolean;
     encrypt_messages?: boolean;
+    use_asymmetric_encryption?: boolean;
     executionMode?: string;
     skipOutputSanitization?: boolean;
 }
@@ -137,6 +138,7 @@ export default class SecureExecutor {
                 timeout: payload.timeout || 30000,
                 ai_eval: payload.ai_eval || false,
                 encrypt_messages: payload.encrypt_messages || false,
+                use_asymmetric_encryption: payload.use_asymmetric_encryption || false,
                 explanation_of_code: payload.explanation_of_code // Pass through if present
             };
 
@@ -279,6 +281,7 @@ export default class SecureExecutor {
                     env: limitedEnv,
                     ai_eval: payload.ai_eval || false,
                     encrypt_messages: payload.encrypt_messages || false,
+                    use_asymmetric_encryption: payload.use_asymmetric_encryption || false,
                     executionMode: 'full'
                 }).then(result => {
                     this.cleanup(tempPath);

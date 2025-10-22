@@ -11,6 +11,8 @@ import {
     retrieveDocResources
 } from './retrieve_resources/index.js';
 import { encrypt, decrypt, safeObfuscate } from './utils/crypto.js';
+import { getKeyMetadata, decryptWithPrivateKey, encryptWithPublicKey, isKeyPairInitialized } from './utils/asymmetric-crypto.js';
+import { verifyBearerToken, extractBearerToken } from './utils/auth.js';
 import LocalLLM from './local_llm/local.js';
 import JobManager from './jobs/JobManager.js';
 import SecureExecutor from './secure/SecureExecutor.js';
@@ -386,7 +388,7 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         req.on('data', chunk => {
             body += chunk.toString();
         });
-        
+
         req.on('end', async (): Promise<void> => {
             try {
                 JSON.parse(body); // Parse to validate JSON format
@@ -394,20 +396,80 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                 const environmentVariableKeys = await retrieveEnvironmentVariableKeys();
                 const docResources = await retrieveDocResources();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ 
+                res.end(JSON.stringify({
                     "packageJson": packageJson,
                     "environmentVariableKeys": environmentVariableKeys,
                     "docResources": docResources,
                 }));
             } catch (error: any) {
                 res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ 
+                res.end(JSON.stringify({
                     error: 'Failed to retrieve package.json and environment variable keys',
-                    details: error.message 
+                    details: error.message
                 }));
             }
         });
-    
+
+    } else if (req.method === 'GET' && req.url === '/crypto/public-key') {
+        // Get public encryption key (requires bearer token authentication)
+        (async (): Promise<void> => {
+            try {
+                // Extract and verify bearer token
+                const authHeader = req.headers['authorization'];
+                const token = extractBearerToken(authHeader);
+
+                if (!token) {
+                    res.writeHead(401, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Unauthorized',
+                        message: 'Bearer token required. Please provide Authorization header with Bearer token.'
+                    }));
+                    return;
+                }
+
+                // Verify token against keyboard.dev auth service
+                const isValid = await verifyBearerToken(token);
+                if (!isValid) {
+                    res.writeHead(401, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Unauthorized',
+                        message: 'Invalid or expired bearer token'
+                    }));
+                    return;
+                }
+
+                // Check if key pair is initialized
+                if (!isKeyPairInitialized()) {
+                    res.writeHead(503, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Service Unavailable',
+                        message: 'Encryption key pair not initialized. Server may still be starting up.'
+                    }));
+                    return;
+                }
+
+                // Return public key metadata
+                const keyMetadata = getKeyMetadata();
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    success: true,
+                    publicKey: keyMetadata.publicKey,
+                    algorithm: keyMetadata.algorithm,
+                    createdAt: keyMetadata.createdAt,
+                    fingerprint: keyMetadata.fingerprint
+                }));
+
+            } catch (error: any) {
+                console.error('❌ Error retrieving public key:', error.message);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: 'Internal Server Error',
+                    message: 'Failed to retrieve public key',
+                    details: error.message
+                }));
+            }
+        })();
+
     } else if(req.method === 'POST' && req.url === '/execute') {
         let body = '';
 
@@ -441,37 +503,72 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
             try {
                 const payload: ExecutionPayload = JSON.parse(body);
                 console.log("this is the payload", payload)
-                // Handle encryption if encrypt_messages is true
-                if (payload.encrypt_messages) {
-                    try {
-                        // Check if KB_ENCRYPTION_SECRET is available
-                        if (!process.env.KB_ENCRYPTION_SECRET) {
-                            res.writeHead(400, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({ 
-                                error: 'KB_ENCRYPTION_SECRET environment variable is required when encrypt_messages is true' 
-                            }));
-                        }
 
-                        // Decrypt the code if it's encrypted
-                        if (payload.code) {
-                            try {
-                                payload.code = decrypt(payload.code);
-                            } catch (decryptError: any) {
-                                console.error('❌ Failed to decrypt code:', decryptError.message);
-                                res.writeHead(400, { 'Content-Type': 'application/json' });
-                                res.end(JSON.stringify({ 
-                                    error: 'Failed to decrypt code', 
-                                    details: decryptError.message 
+                // Handle encryption (both asymmetric and symmetric)
+                if (payload.encrypt_messages || payload.use_asymmetric_encryption) {
+                    try {
+                        // Determine which encryption method to use
+                        const useAsymmetric = payload.use_asymmetric_encryption;
+
+                        if (useAsymmetric) {
+                            // Use asymmetric encryption (RSA)
+                            if (!isKeyPairInitialized()) {
+                                res.writeHead(503, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({
+                                    error: 'Asymmetric encryption not available. Key pair not initialized.'
                                 }));
+                                return;
+                            }
+
+                            // Decrypt the code using private key
+                            if (payload.code) {
+                                try {
+                                    payload.code = decryptWithPrivateKey(payload.code);
+                                    console.log('✅ Code decrypted using asymmetric encryption');
+                                } catch (decryptError: any) {
+                                    console.error('❌ Failed to decrypt code with private key:', decryptError.message);
+                                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                                    res.end(JSON.stringify({
+                                        error: 'Failed to decrypt code',
+                                        details: decryptError.message
+                                    }));
+                                    return;
+                                }
+                            }
+                        } else {
+                            // Use symmetric encryption (AES) - legacy support
+                            if (!process.env.KB_ENCRYPTION_SECRET) {
+                                res.writeHead(400, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({
+                                    error: 'KB_ENCRYPTION_SECRET environment variable is required when encrypt_messages is true'
+                                }));
+                                return;
+                            }
+
+                            // Decrypt the code if it's encrypted
+                            if (payload.code) {
+                                try {
+                                    payload.code = decrypt(payload.code);
+                                    console.log('✅ Code decrypted using symmetric encryption');
+                                } catch (decryptError: any) {
+                                    console.error('❌ Failed to decrypt code:', decryptError.message);
+                                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                                    res.end(JSON.stringify({
+                                        error: 'Failed to decrypt code',
+                                        details: decryptError.message
+                                    }));
+                                    return;
+                                }
                             }
                         }
                     } catch (encryptionError: any) {
                         console.error('❌ Encryption setup error:', encryptionError.message);
                         res.writeHead(500, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ 
-                            error: 'Encryption setup failed', 
-                            details: encryptionError.message 
+                        res.end(JSON.stringify({
+                            error: 'Encryption setup failed',
+                            details: encryptionError.message
                         }));
+                        return;
                     }
                 }
 
@@ -506,8 +603,20 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                                 status: 'PENDING',
                                 message: 'Job submitted for background execution'
                             };
-                            
-                            if (payload.encrypt_messages) {
+
+                            // Encrypt response if requested
+                            if (payload.use_asymmetric_encryption) {
+                                try {
+                                    const responseString = JSON.stringify(response);
+                                    const encryptedResponse = encryptWithPublicKey(responseString);
+                                    response = {
+                                        encrypted: true,
+                                        data: encryptedResponse
+                                    };
+                                } catch (encryptError: any) {
+                                    response.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                                }
+                            } else if (payload.encrypt_messages) {
                                 try {
                                     const responseString = JSON.stringify(response);
                                     const encryptedResponse = encrypt(responseString);
@@ -915,7 +1024,19 @@ async function executeCodeWithSecureMode(
 
         // Handle encryption if requested
         let finalResult: any = result;
-        if (payload.encrypt_messages) {
+        if (payload.use_asymmetric_encryption) {
+            try {
+                const responseString = JSON.stringify(result);
+                const encryptedResponse = encryptWithPublicKey(responseString);
+                finalResult = {
+                    encrypted: true,
+                    data: encryptedResponse
+                };
+            } catch (encryptError: any) {
+                console.error('❌ Failed to encrypt response with public key:', encryptError.message);
+                (finalResult as any).encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+            }
+        } else if (payload.encrypt_messages) {
             try {
                 const responseString = JSON.stringify(result);
                 const encryptedResponse = encrypt(responseString);
@@ -943,7 +1064,19 @@ async function executeCodeWithSecureMode(
         };
 
         // Handle encryption for error response
-        if (payload.encrypt_messages) {
+        if (payload.use_asymmetric_encryption) {
+            try {
+                const errorString = JSON.stringify(errorResult);
+                const encryptedError = encryptWithPublicKey(errorString);
+                errorResult = {
+                    encrypted: true,
+                    data: encryptedError
+                };
+            } catch (encryptError: any) {
+                console.error('❌ Failed to encrypt error response with public key:', encryptError.message);
+                errorResult.encryptionError = 'Failed to encrypt error response: ' + encryptError.message;
+            }
+        } else if (payload.encrypt_messages) {
             try {
                 const errorString = JSON.stringify(errorResult);
                 const encryptedError = encrypt(errorString);
@@ -995,8 +1128,20 @@ function executeProcessWithTimeout(
                 message: `Process timed out after ${timeout}ms. Consider increasing timeout or optimizing async operations.`
             };
             
-            // Encrypt the timeout response if encrypt_messages is true
-            if (options.encrypt_messages) {
+            // Encrypt the timeout response if requested
+            if (options.use_asymmetric_encryption) {
+                try {
+                    const timeoutString = JSON.stringify(timeoutResult);
+                    const encryptedTimeout = encryptWithPublicKey(timeoutString);
+                    timeoutResult = {
+                        encrypted: true,
+                        data: encryptedTimeout
+                    };
+                } catch (encryptError: any) {
+                    console.error('❌ Failed to encrypt timeout response with public key:', encryptError.message);
+                    timeoutResult.encryptionError = 'Failed to encrypt timeout response: ' + encryptError.message;
+                }
+            } else if (options.encrypt_messages) {
                 try {
                     const timeoutString = JSON.stringify(timeoutResult);
                     const encryptedTimeout = encrypt(timeoutString);
@@ -1065,8 +1210,20 @@ function executeProcessWithTimeout(
             }
             console.log(finalResult)
             
-            // Encrypt the response if encrypt_messages is true
-            if (options.encrypt_messages) {
+            // Encrypt the response if requested
+            if (options.use_asymmetric_encryption) {
+                try {
+                    const responseString = JSON.stringify(finalResult);
+                    const encryptedResponse = encryptWithPublicKey(responseString);
+                    finalResult = {
+                        encrypted: true,
+                        data: encryptedResponse
+                    };
+                } catch (encryptError: any) {
+                    console.error('❌ Failed to encrypt response with public key:', encryptError.message);
+                    finalResult.encryptionError = 'Failed to encrypt response: ' + encryptError.message;
+                }
+            } else if (options.encrypt_messages) {
                 try {
                     const responseString = JSON.stringify(finalResult);
                     const encryptedResponse = encrypt(responseString);
@@ -1107,8 +1264,20 @@ function executeProcessWithTimeout(
                 }
             };
             
-            // Encrypt the error response if encrypt_messages is true
-            if (options.encrypt_messages) {
+            // Encrypt the error response if requested
+            if (options.use_asymmetric_encryption) {
+                try {
+                    const errorString = JSON.stringify(errorResult);
+                    const encryptedError = encryptWithPublicKey(errorString);
+                    errorResult = {
+                        encrypted: true,
+                        data: encryptedError
+                    };
+                } catch (encryptError: any) {
+                    console.error('❌ Failed to encrypt error response with public key:', encryptError.message);
+                    errorResult.encryptionError = 'Failed to encrypt error response: ' + encryptError.message;
+                }
+            } else if (options.encrypt_messages) {
                 try {
                     const errorString = JSON.stringify(errorResult);
                     const encryptedError = encrypt(errorString);

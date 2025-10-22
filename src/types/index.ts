@@ -9,6 +9,7 @@ export interface ExecutionPayload {
   asyncTimeout?: number;
   ai_eval?: boolean;
   encrypt_messages?: boolean;
+  use_asymmetric_encryption?: boolean;
   background?: boolean;
   priority?: 'low' | 'normal' | 'high';
   maxRetries?: number;
@@ -231,6 +232,20 @@ export interface ExecutionOptions {
   env?: Record<string, string>;
   ai_eval?: boolean;
   encrypt_messages?: boolean;
+  use_asymmetric_encryption?: boolean;
+}
+
+export interface KeyPairInfo {
+  publicKey: string;
+  algorithm: string;
+  createdAt: string;
+  fingerprint: string;
+}
+
+export interface AsymmetricEncryptionConfig {
+  enabled: boolean;
+  algorithm: string;
+  keySize: number;
 }
 
 export type SecureExecutionResult = ExecutionResult;

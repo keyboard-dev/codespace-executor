@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
+import { generateKeyPair } from './utils/asymmetric-crypto.js';
 
 interface ServiceConfig {
   name: string;
@@ -30,6 +31,14 @@ export class ServiceBootstrap {
    */
   async bootUpServices(): Promise<void> {
     console.log('🚀 Booting up services...\n');
+
+    // Generate RSA key pair on boot
+    try {
+      generateKeyPair();
+    } catch (error: any) {
+      console.error('❌ Failed to generate encryption key pair:', error.message);
+      console.error('⚠️  Server will continue without asymmetric encryption support');
+    }
 
     const services: ServiceConfig[] = [
       // WebSocket server
