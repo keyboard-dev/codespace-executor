@@ -24,7 +24,6 @@ export async function verifyBearerToken(token: string): Promise<boolean> {
       issuer: ISSUER_URL,
     });
 
-    console.log('✅ Token verification successful');
     return true;
 
   } catch (error: any) {

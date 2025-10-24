@@ -11,7 +11,7 @@ import {
     retrieveDocResources
 } from './retrieve_resources/index.js';
 import { encrypt, decrypt, safeObfuscate } from './utils/crypto.js';
-import { getKeyMetadata, decryptWithPrivateKey, encryptWithPublicKey, isKeyPairInitialized } from './utils/asymmetric-crypto.js';
+import { getKeyMetadata, decryptWithPrivateKey, encryptWithPublicKey, isKeyPairInitialized, tryDecrypt } from './utils/asymmetric-crypto.js';
 import { verifyBearerToken, extractBearerToken } from './utils/auth.js';
 import LocalLLM from './local_llm/local.js';
 import JobManager from './jobs/JobManager.js';
@@ -489,12 +489,13 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                     
                     const headerValue = req.headers[headerName];
                     if (typeof headerValue === 'string') {
-                        headerEnvVars[envVarName] = headerValue;
+                        const decryptedValue = tryDecrypt(headerValue);
+                        headerEnvVars[envVarName] = decryptedValue
                     }
                 }
             });
+            
         }
-
         req.on('data', chunk => {
             body += chunk.toString();
         });
@@ -502,7 +503,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
         req.on('end', async (): Promise<void> => {
             try {
                 const payload: ExecutionPayload = JSON.parse(body);
-                console.log("this is the payload", payload)
 
                 // Handle encryption (both asymmetric and symmetric)
                 if (payload.encrypt_messages || payload.use_asymmetric_encryption) {
@@ -642,7 +642,6 @@ const server = http.createServer((req: http.IncomingMessage, res: http.ServerRes
                         }
                     } else {
                         // Enhanced code execution with secure or full mode based on feature flag
-                        console.log(payload)
                         executeCodeWithSecureMode(payload, res, headerEnvVars);
                     }
                 } else if (payload.command) {
@@ -1176,7 +1175,6 @@ function executeProcessWithTimeout(
             
             if (cleanup) cleanup();
             let aiAnalysis: any;
-            console.log(options)
             if(options.ai_eval) {
                 try {
                 console.log("AI EVALUATION")
@@ -1187,12 +1185,10 @@ function executeProcessWithTimeout(
                 
                 <stderr>${safeObfuscate(stderr)}</stderr>`
                 let result = await localLLM.analyzeResponse(JSON.stringify(outputsOfCodeExecution))
-                console.log("this is the result", result)
                 aiAnalysis = result
                 
                 } catch(e) {
-                    console.log("this is the error")
-                    console.log(e)
+
                 }
             }
 
@@ -1208,7 +1204,7 @@ function executeProcessWithTimeout(
                     executionTime: Date.now() // Add execution timestamp
                 }
             }
-            console.log(finalResult)
+
             
             // Encrypt the response if requested
             if (options.use_asymmetric_encryption) {
@@ -1239,7 +1235,7 @@ function executeProcessWithTimeout(
             }
             
             } catch(e) {
-                console.log(e)
+    
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(finalResult));
@@ -1317,7 +1313,6 @@ server.listen(PORT, async () => {
         serviceBootstrap = await bootUpServices();
         console.log(`🎉 All services booted successfully`);
     } catch (error: any) {
-        console.error('⚠️  Failed to boot some services:', error.message);
         console.log('📝 Server will continue running, but some features may be unavailable');
     }
 });

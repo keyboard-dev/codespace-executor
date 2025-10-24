@@ -131,8 +131,6 @@ export class WebSocketServer {
 
       // Write to file with restricted permissions
       fs.writeFileSync(this.WS_KEY_FILE, JSON.stringify(keyData, null, 2), { mode: 0o600 })
-
-      console.log('✅ Generated new WebSocket connection key')
     }
     catch (error) {
       console.error('❌ Error generating WebSocket key:', error)
@@ -295,7 +293,6 @@ export class WebSocketServer {
 
           // Handle approval response from approver-client
           if (message.type === 'approval-response') {
-            console.log(`📥 Received approval response for message ${message.id}: ${(message as any).status}`)
             
             // Find and update the message
             const targetMessage = this.messages.find(m => m.id === message.id)
@@ -305,8 +302,6 @@ export class WebSocketServer {
               
               // Update pending count
               this.pendingCount = this.messages.filter(m => m.status === 'pending' || !m.status).length
-              
-              console.log(`✅ Updated message ${message.id} status to ${targetMessage.status}`)
 
               // Broadcast the updated message to other clients (excluding sender)
               this.broadcastToOthers({
@@ -355,8 +350,6 @@ export class WebSocketServer {
         console.error('❌ WebSocket error:', error)
       })
     })
-
-    console.log(`✅ WebSocket server listening on ws://127.0.0.1:${this.WS_PORT}`)
   }
 
   // Public method to send a message to all connected clients
@@ -453,9 +446,6 @@ export class WebSocketServer {
     // Update pending count
     this.pendingCount = this.messages.filter(m => m.status === 'pending' || !m.status).length
 
-    console.log(`📨 Stored message: ${message.title} (Status: ${message.status})`)
-    console.log(`📊 Pending messages: ${this.pendingCount}`)
-
     // Broadcast message to all connected clients except the sender
     if (sender) {
       this.broadcastToOthers({
@@ -486,7 +476,7 @@ export class WebSocketServer {
     // Update pending count
     this.pendingCount = this.messages.filter(m => m.status === 'pending' || !m.status).length
 
-    console.log(`✅ Approved message: ${existingMessage.title}`)
+    
 
     // Send response back through WebSocket if needed
     this.sendWebSocketResponse(existingMessage)
@@ -530,8 +520,6 @@ export class WebSocketServer {
       // Update pending count
       this.pendingCount = this.messages.filter(m => m.status === 'pending' || !m.status).length
 
-      console.log(`❌ Rejected message: ${message.title}`)
-
       // Send response back through WebSocket if needed
       this.sendWebSocketResponse(message)
       return true
@@ -560,19 +548,3 @@ export class WebSocketServer {
   }
 }
 
-// Example usage:
-// const wsServer = new WebSocketServer()
-// To get the connection URL: wsServer.getWebSocketConnectionUrl()
-// To broadcast a message: wsServer.broadcast({ type: 'notification', data: 'Hello!' })
-// To cleanup: wsServer.cleanup()
-
-// Uncomment to run the server directly
-// const wsServer = new WebSocketServer()
-// console.log('Connection URL:', wsServer.getWebSocketConnectionUrl())
-// 
-// // Handle graceful shutdown
-// process.on('SIGINT', () => {
-//   console.log('\n🛑 Shutting down WebSocket server...')
-//   wsServer.cleanup()
-//   process.exit(0)
-// })

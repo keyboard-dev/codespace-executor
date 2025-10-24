@@ -14,7 +14,8 @@
     "setup-ollama": "node setup-ollama.js",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "kill": "lsof -ti:3000 | xargs kill -9 || echo 'No process found on port 3000'"
+    "kill": "lsof -ti:3000 | xargs kill -9 || echo 'No process found on port 3000'",
+    "kill-ws": "lsof -ti:4002 | xargs kill -9 || echo 'No process found on port 4002'"
   },
   "dependencies": {
     "@fal-ai/client": "^1.6.2",
