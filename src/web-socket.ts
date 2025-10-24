@@ -156,15 +156,15 @@ export class WebSocketServer {
       verifyClient: (info: WebSocketVerifyInfo) => {
         try {
           // Validate connection is from localhost
-          const remoteAddress = info.req.connection.remoteAddress
-          const isLocalhost = remoteAddress === '127.0.0.1'
-            || remoteAddress === '::1'
-            || remoteAddress === '::ffff:127.0.0.1'
+          // const remoteAddress = info.req.connection.remoteAddress
+          // const isLocalhost = remoteAddress === '127.0.0.1'
+          //   || remoteAddress === '::1'
+          //   || remoteAddress === '::ffff:127.0.0.1'
 
-          if (!isLocalhost) {
-            console.log('❌ WebSocket connection rejected: not from localhost')
-            return false
-          }
+          // if (!isLocalhost) {
+          //   console.log('❌ WebSocket connection rejected: not from localhost')
+          //   return false
+          // }
 
           // Check for GitHub token authentication in headers
           const authHeader = info.req.headers?.['authorization']

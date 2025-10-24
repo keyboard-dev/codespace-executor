@@ -1,6 +1,6 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
-const ISSUER_URL = "https://ethical-diamond-86-staging.authkit.app"
+const ISSUER_URL = "https://login.keyboard.dev"
 const JWKS = createRemoteJWKSet(new URL(`${ISSUER_URL}/oauth2/jwks`));
 
 interface VerificationResult {
