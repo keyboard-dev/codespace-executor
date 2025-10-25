@@ -243,6 +243,13 @@ export class WebSocketServer {
             }, ws)
             return
           }
+          if (message.type === 'provider-auth-token') {
+              this.broadcastToOthers({
+                ...message,
+                timestamp: Date.now(),
+            }, ws)
+            return
+          }
 
           // Handle provider status request
           if (message.type === 'request-provider-status') {
