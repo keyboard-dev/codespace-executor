@@ -285,9 +285,7 @@ export default class LocalLLM {
         return true;
       }
 
-      console.log(
-        "📥 Pulling Gemma 3 1B model (this may take a few minutes)..."
-      );
+
 
       // Pull model synchronously so we know when it's done
       await execAsync(`ollama pull ${this.model}`);
