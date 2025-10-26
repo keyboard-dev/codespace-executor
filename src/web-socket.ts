@@ -298,6 +298,43 @@ export class WebSocketServer {
             return
           }
 
+          // Handle auth token response from MenuBarApp
+          if (message.type === 'auth-token') {
+            this.broadcastToOthers(message, ws)
+            return
+          }
+
+          // Handle user tokens available response
+          if (message.type === 'user-tokens-available') {
+            this.broadcastToOthers(message, ws)
+            return
+          }
+
+          // Handle collection share response
+          if (message.type === 'collection-share-response') {
+            this.broadcast({
+              type: 'collection-share-response',
+              ...message,
+              timestamp: Date.now(),
+            })
+            return
+          }
+
+          // Handle wrapped websocket messages
+          if (message.type === 'websocket-message') {
+            this.broadcastToOthers(message, ws)
+            return
+          }
+
+          // Handle messages cleared notification
+          if (message.type === 'messages-cleared') {
+            this.broadcast({
+              type: 'messages-cleared',
+              timestamp: Date.now(),
+            })
+            return
+          }
+
           // Handle approval response from approver-client
           if (message.type === 'approval-response') {
             
