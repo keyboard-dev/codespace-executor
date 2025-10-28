@@ -288,7 +288,7 @@ export default class JobManager {
         });
         
         if (expiredJobs.length > 0) {
-            console.log(`🧹 Cleaned up ${expiredJobs.length} expired jobs`);
+            
         }
     }
 
@@ -343,7 +343,7 @@ export default class JobManager {
                 this.jobs.set(jobId, job);
             }
             
-            console.log(`📂 Loaded ${Object.keys(persistedJobs).length} persisted jobs`);
+            
             
             // Process any pending jobs
             this.processNextJob();
@@ -387,6 +387,6 @@ export default class JobManager {
             clearInterval(this.cleanupInterval);
         }
         
-        console.log('🛑 JobManager shutdown complete');
+        
     }
 }

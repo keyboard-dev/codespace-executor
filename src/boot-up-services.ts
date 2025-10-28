@@ -30,7 +30,7 @@ export class ServiceBootstrap {
    * Boot up all configured services
    */
   async bootUpServices(): Promise<void> {
-    console.log('🚀 Booting up services...\n');
+    
 
     // Generate RSA key pair on boot
     try {
@@ -56,14 +56,14 @@ export class ServiceBootstrap {
       await this.startService(serviceConfig);
     }
 
-    console.log('\n✅ All services boot-up initiated\n');
+    
   }
 
   /**
    * Start a single service
    */
   private async startService(config: ServiceConfig): Promise<void> {
-    console.log(`📦 Starting ${config.name}...`);
+    
 
     try {
       const serviceProcess = spawn(config.command, config.args, {
@@ -86,7 +86,7 @@ export class ServiceBootstrap {
         serviceProcess.stdout?.on('data', (data) => {
           const output = data.toString().trim();
           if (output) {
-            console.log(`  [${config.name}] ${output}`);
+            
           }
         });
 
@@ -104,9 +104,9 @@ export class ServiceBootstrap {
         if (code !== 0 && code !== null) {
           console.error(`❌ ${config.name} exited with code ${code}`);
         } else if (signal) {
-          console.log(`⚠️  ${config.name} killed with signal ${signal}`);
+          
         } else {
-          console.log(`✅ ${config.name} completed successfully`);
+          
         }
       });
 
@@ -120,7 +120,7 @@ export class ServiceBootstrap {
       setTimeout(() => {
         if (serviceInfo.status === 'starting') {
           serviceInfo.status = 'running';
-          console.log(`✅ ${config.name} started`);
+          
         }
       }, 1000);
 
@@ -146,11 +146,11 @@ export class ServiceBootstrap {
    * Shutdown all services gracefully
    */
   async shutdown(): Promise<void> {
-    console.log('\n🛑 Shutting down services...');
+    
 
     for (const service of this.services) {
       if (service.status === 'running' || service.status === 'starting') {
-        console.log(`  Stopping ${service.name}...`);
+        
         try {
           service.process.kill('SIGTERM');
           service.status = 'stopped';
@@ -166,7 +166,7 @@ export class ServiceBootstrap {
     // Force kill any remaining processes
     for (const service of this.services) {
       if (service.status === 'running') {
-        console.log(`  Force killing ${service.name}...`);
+        
         try {
           service.process.kill('SIGKILL');
         } catch (error) {
@@ -175,7 +175,7 @@ export class ServiceBootstrap {
       }
     }
 
-    console.log('✅ All services shutdown complete');
+    
   }
 }
 

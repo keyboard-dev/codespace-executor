@@ -162,7 +162,7 @@ export class WebSocketServer {
           //   || remoteAddress === '::ffff:127.0.0.1'
 
           // if (!isLocalhost) {
-          //   console.log('❌ WebSocket connection rejected: not from localhost')
+          //   
           //   return false
           // }
 
@@ -184,12 +184,12 @@ export class WebSocketServer {
           const hasKeyAuth = providedKey && this.validateWebSocketKey(providedKey)
           
           if (!hasGitHubAuth && !hasKeyAuth) {
-            console.log('❌ WebSocket connection rejected: no valid authentication')
+            
             return false
           }
 
           if (hasGitHubAuth) {
-            console.log('✅ WebSocket connection authenticated with GitHub token')
+            
           }
 
           return true
@@ -202,12 +202,12 @@ export class WebSocketServer {
     })
 
     this.wsServer.on('connection', (ws: WebSocket) => {
-      console.log('✅ WebSocket client connected')
+      
 
       ws.on('message', async (data: WebSocket.Data) => {
         try {
           const message = JSON.parse(data.toString()) as WebSocketMessage
-          console.log('📥 Received WebSocket message:', message.type)
+          
 
           // Handle token request
           if (message.type === 'request-token') {
@@ -387,7 +387,7 @@ export class WebSocketServer {
       })
 
       ws.on('close', () => {
-        console.log('👋 WebSocket client disconnected')
+        
       })
 
       ws.on('error', (error) => {
@@ -574,7 +574,7 @@ export class WebSocketServer {
   clearAllMessages(): void {
     this.messages = []
     this.pendingCount = 0
-    console.log('🧹 Cleared all messages')
+    
 
     // Notify all clients
     this.broadcast({
@@ -587,7 +587,7 @@ export class WebSocketServer {
   cleanup(): void {
     if (this.wsServer) {
       this.wsServer.close()
-      console.log('👋 WebSocket server closed')
+      
     }
   }
 }
