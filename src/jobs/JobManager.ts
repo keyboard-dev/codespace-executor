@@ -1,12 +1,50 @@
-const fs = require('fs');
-const path = require('path');
-const { randomBytes } = require('crypto');
-const SecureExecutor = require('../secure/SecureExecutor');
+import fs from 'fs';
+import path from 'path';
+import { randomBytes } from 'crypto';
+import SecureExecutor from '../secure/SecureExecutor';
+import { Job, JobStatus, JobOptions, JobResult, JobError, ExecutionPayload } from '../types';
 
-class JobManager {
-    constructor(options = {}) {
-        this.jobs = new Map();
-        this.workers = new Map();
+export interface JobManagerOptions {
+    maxConcurrentJobs?: number;
+    jobTTL?: number;
+    persistenceFile?: string;
+    enablePersistence?: boolean;
+}
+
+export interface GetAllJobsOptions {
+    status?: JobStatus | null;
+    limit?: number;
+    offset?: number;
+}
+
+export interface GetAllJobsResult {
+    jobs: Job[];
+    total: number;
+    hasMore: boolean;
+}
+
+export interface JobStats {
+    total: number;
+    pending: number;
+    running: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+    activeWorkers: number;
+    maxConcurrentJobs: number;
+}
+
+export default class JobManager {
+    private jobs: Map<string, Job> = new Map();
+    private workers: Map<string, any> = new Map();
+    private maxConcurrentJobs: number;
+    private jobTTL: number;
+    private persistenceFile: string;
+    private enablePersistence: boolean;
+    private secureExecutor: SecureExecutor;
+    private cleanupInterval: NodeJS.Timeout;
+
+    constructor(options: JobManagerOptions = {}) {
         this.maxConcurrentJobs = options.maxConcurrentJobs || 5;
         this.jobTTL = options.jobTTL || 24 * 60 * 60 * 1000; // 24 hours default
         this.persistenceFile = options.persistenceFile || path.join(__dirname, '../../data/jobs.json');
@@ -31,13 +69,13 @@ class JobManager {
         }, 60000); // Run every minute
     }
 
-    generateJobId() {
+    generateJobId(): string {
         return randomBytes(16).toString('hex');
     }
 
-    createJob(payload, options = {}) {
+    createJob(payload: ExecutionPayload, options: JobOptions = {}): string {
         const jobId = this.generateJobId();
-        const job = {
+        const job: Job = {
             id: jobId,
             status: 'PENDING',
             payload: payload,
@@ -60,11 +98,11 @@ class JobManager {
         return jobId;
     }
 
-    getJob(jobId) {
+    getJob(jobId: string): Job | undefined {
         return this.jobs.get(jobId);
     }
 
-    getAllJobs(options = {}) {
+    getAllJobs(options: GetAllJobsOptions = {}): GetAllJobsResult {
         const { status, limit = 100, offset = 0 } = options;
         let jobs = Array.from(this.jobs.values());
         
@@ -73,7 +111,7 @@ class JobManager {
         }
         
         // Sort by creation date (newest first)
-        jobs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        jobs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         
         return {
             jobs: jobs.slice(offset, offset + limit),
@@ -82,7 +120,7 @@ class JobManager {
         };
     }
 
-    updateJobStatus(jobId, status, data = {}) {
+    updateJobStatus(jobId: string, status: JobStatus, data: Partial<Job> = {}): Job {
         const job = this.jobs.get(jobId);
         if (!job) {
             throw new Error(`Job ${jobId} not found`);
@@ -106,7 +144,7 @@ class JobManager {
         return job;
     }
 
-    updateJobProgress(jobId, progress, message = null) {
+    updateJobProgress(jobId: string, progress: number, message: string | null = null): void {
         const job = this.jobs.get(jobId);
         if (job && job.status === 'RUNNING') {
             job.progress = Math.min(100, Math.max(0, progress));
@@ -119,7 +157,7 @@ class JobManager {
         }
     }
 
-    cancelJob(jobId) {
+    cancelJob(jobId: string): Job {
         const job = this.jobs.get(jobId);
         if (!job) {
             throw new Error(`Job ${jobId} not found`);
@@ -138,7 +176,7 @@ class JobManager {
         return job;
     }
 
-    deleteJob(jobId) {
+    deleteJob(jobId: string): boolean {
         const job = this.jobs.get(jobId);
         if (!job) {
             throw new Error(`Job ${jobId} not found`);
@@ -155,7 +193,7 @@ class JobManager {
         return true;
     }
 
-    processNextJob() {
+    processNextJob(): boolean {
         // Check if we have available worker slots
         if (this.workers.size >= this.maxConcurrentJobs) {
             return false;
@@ -173,7 +211,7 @@ class JobManager {
         return true;
     }
 
-    async startJobExecution(job) {
+    private async startJobExecution(job: Job): Promise<void> {
         try {
             this.updateJobStatus(job.id, 'RUNNING');
 
@@ -183,58 +221,59 @@ class JobManager {
             // Handle successful execution
             if (result.success) {
                 // Prepare result data with security filtering already applied
-                let jobResult = {
-                    stdout: result.data.stdout,
-                    stderr: result.data.stderr,
-                    code: result.data.code || 0,
-                    executionTime: result.data.executionTime || Date.now(),
-                    executionMode: result.data.executionMode,
-                    securityFiltered: result.data.securityFiltered
+                const jobResult: JobResult = {
+                    stdout: result.data?.stdout || '',
+                    stderr: result.data?.stderr || '',
+                    code: result.data?.code || 0,
+                    executionTime: result.data?.executionTime || Date.now(),
+                    executionMode: result.data?.executionMode,
+                    securityFiltered: result.data?.securityFiltered
                 };
 
                 // Add AI analysis if available
-                if (result.data.aiAnalysis) {
+                if (result.data?.aiAnalysis) {
                     jobResult.aiAnalysis = result.data.aiAnalysis;
                 }
 
                 // Add code analysis info
-                if (result.data.codeAnalysis) {
+                if (result.data?.codeAnalysis) {
                     jobResult.codeAnalysis = result.data.codeAnalysis;
                 }
 
                 this.updateJobStatus(job.id, 'COMPLETED', { result: jobResult });
             } else {
                 // Handle execution failure
-                this.updateJobStatus(job.id, 'FAILED', {
-                    error: {
-                        message: result.error || 'Job execution failed',
-                        type: result.details || 'EXECUTION_ERROR',
-                        executionMode: result.executionMode || 'unknown',
-                        stdout: result.stdout || '',
-                        stderr: result.stderr || ''
-                    }
-                });
+                const error: JobError = {
+                    message: result.error || 'Job execution failed',
+                    type: result.details || 'EXECUTION_ERROR',
+                    executionMode: result.executionMode || 'unknown'
+                };
+
+                // Add stdout/stderr if available in error response
+                if ((result as any).stdout) error.stdout = (result as any).stdout;
+                if ((result as any).stderr) error.stderr = (result as any).stderr;
+
+                this.updateJobStatus(job.id, 'FAILED', { error });
             }
 
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Job execution error:', error);
-            this.updateJobStatus(job.id, 'FAILED', {
-                error: {
-                    message: error.message || 'Unknown execution error',
-                    type: error.constructor.name,
-                    details: error.details,
-                    executionMode: error.executionMode || 'unknown'
-                }
-            });
+            const jobError: JobError = {
+                message: error.message || 'Unknown execution error',
+                type: error.constructor.name,
+                details: error.details,
+                executionMode: error.executionMode || 'unknown'
+            };
+            this.updateJobStatus(job.id, 'FAILED', { error: jobError });
         }
 
         // Always try to process next job
         this.processNextJob();
     }
 
-    cleanupExpiredJobs() {
+    private cleanupExpiredJobs(): void {
         const now = Date.now();
-        const expiredJobs = [];
+        const expiredJobs: string[] = [];
         
         for (const [jobId, job] of this.jobs.entries()) {
             const jobAge = now - new Date(job.createdAt).getTime();
@@ -249,47 +288,47 @@ class JobManager {
         });
         
         if (expiredJobs.length > 0) {
-            console.log(`🧹 Cleaned up ${expiredJobs.length} expired jobs`);
+            
         }
     }
 
-    persistJob(job) {
+    private persistJob(job: Job): void {
         if (!this.enablePersistence) return;
         
         try {
             const jobs = this.loadJobsFromFile();
             jobs[job.id] = job;
             fs.writeFileSync(this.persistenceFile, JSON.stringify(jobs, null, 2));
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Failed to persist job:', error.message);
         }
     }
 
-    removePersistedJob(jobId) {
+    private removePersistedJob(jobId: string): void {
         if (!this.enablePersistence) return;
         
         try {
             const jobs = this.loadJobsFromFile();
             delete jobs[jobId];
             fs.writeFileSync(this.persistenceFile, JSON.stringify(jobs, null, 2));
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Failed to remove persisted job:', error.message);
         }
     }
 
-    loadJobsFromFile() {
+    private loadJobsFromFile(): Record<string, Job> {
         try {
             if (fs.existsSync(this.persistenceFile)) {
                 const data = fs.readFileSync(this.persistenceFile, 'utf8');
                 return JSON.parse(data);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Failed to load jobs from file:', error.message);
         }
         return {};
     }
 
-    loadPersistedJobs() {
+    private loadPersistedJobs(): void {
         try {
             const persistedJobs = this.loadJobsFromFile();
             
@@ -304,17 +343,17 @@ class JobManager {
                 this.jobs.set(jobId, job);
             }
             
-            console.log(`📂 Loaded ${Object.keys(persistedJobs).length} persisted jobs`);
+            
             
             // Process any pending jobs
             this.processNextJob();
-        } catch (error) {
+        } catch (error: any) {
             console.error('❌ Failed to load persisted jobs:', error.message);
         }
     }
 
-    getStats() {
-        const stats = {
+    getStats(): JobStats {
+        const stats: JobStats = {
             total: this.jobs.size,
             pending: 0,
             running: 0,
@@ -326,15 +365,18 @@ class JobManager {
         };
 
         for (const job of this.jobs.values()) {
-            stats[job.status.toLowerCase()]++;
+            const statusKey = job.status.toLowerCase() as keyof JobStats;
+            if (typeof stats[statusKey] === 'number') {
+                (stats[statusKey] as number)++;
+            }
         }
 
         return stats;
     }
 
-    shutdown() {
+    shutdown(): void {
         // Cancel all running jobs
-        for (const [jobId, worker] of this.workers.entries()) {
+        for (const [, worker] of this.workers.entries()) {
             if (worker && worker.kill) {
                 worker.kill('SIGTERM');
             }
@@ -345,8 +387,6 @@ class JobManager {
             clearInterval(this.cleanupInterval);
         }
         
-        console.log('🛑 JobManager shutdown complete');
+        
     }
 }
-
-module.exports = JobManager;

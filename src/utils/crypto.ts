@@ -1,9 +1,9 @@
-const { randomBytes, createCipheriv, createDecipheriv } = require('crypto');
-const { obfuscateSensitiveData } = require('../obfuscate');
+import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
+import { obfuscateSensitiveData } from '../obfuscate';
 
 const ALGORITHM = 'aes-256-cbc';
 
-function getEncryptionKey() {
+function getEncryptionKey(): Buffer {
     const key = process.env.KB_ENCRYPTION_SECRET;
     if (!key) {
         throw new Error('KB_ENCRYPTION_SECRET environment variable is required for encryption');
@@ -26,7 +26,7 @@ function getEncryptionKey() {
     }
 }
 
-function encrypt(text) {
+export function encrypt(text: string): string {
     try {
         const encryptionKey = getEncryptionKey();
         const iv = randomBytes(16);
@@ -41,7 +41,7 @@ function encrypt(text) {
     }
 }
 
-function decrypt(encryptedText) {
+export function decrypt(encryptedText: string): string {
     try {
         const encryptionKey = getEncryptionKey();
         const [ivHex, encrypted] = encryptedText.split(':');
@@ -64,10 +64,10 @@ function decrypt(encryptedText) {
 }
 
 // Safe wrapper for obfuscation that never throws
-function safeObfuscate(data, fallbackMessage = '[OBFUSCATION_FAILED]') {
+export function safeObfuscate(data: any, fallbackMessage: string = '[OBFUSCATION_FAILED]'): string {
     try {
         return obfuscateSensitiveData(data);
-    } catch (error) {
+    } catch (error: any) {
         console.error('❌ Obfuscation failed:', error.message);
         // Return original data with a warning, or fallback message for safety
         return typeof data === 'string' ? 
@@ -75,9 +75,3 @@ function safeObfuscate(data, fallbackMessage = '[OBFUSCATION_FAILED]') {
             `${fallbackMessage}: ${String(data)}`;
     }
 }
-
-module.exports = {
-    encrypt,
-    decrypt,
-    safeObfuscate
-};
