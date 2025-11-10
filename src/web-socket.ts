@@ -668,6 +668,7 @@ export class WebSocketServer {
 
   /**
    * Delivers all queued messages to a newly connected client
+   * Clears the queue after delivery to prevent infinite loops
    */
   private deliverQueuedMessages(client: WebSocket): void {
     // Clean up expired messages first
@@ -685,6 +686,11 @@ export class WebSocketServer {
         client.send(JSON.stringify(queuedMsg.message))
       }
     })
+
+    // Clear the queue after delivery to prevent messages from being
+    // delivered multiple times and to avoid infinite loops
+    this.messageQueue = []
+    console.log('🧹 Queue cleared after delivery')
   }
 
   /**
