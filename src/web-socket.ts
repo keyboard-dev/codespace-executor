@@ -55,6 +55,13 @@ interface Message {
   }
 }
 
+// Types for queued messages
+interface QueuedMessage {
+  message: unknown
+  timestamp: number
+  expiresAt: number
+}
+
 export class WebSocketServer {
   private wsServer: WebSocket.Server | null = null
   private readonly WS_PORT = 4002
@@ -66,7 +73,13 @@ export class WebSocketServer {
   // Message storage
   private messages: Message[] = []
   private pendingCount: number = 0
-  
+
+  // Message queue for offline clients
+  private messageQueue: QueuedMessage[] = []
+  private readonly MESSAGE_QUEUE_TTL = 2 * 60 * 1000 // 2 minutes in milliseconds
+  private readonly MESSAGE_QUEUE_MAX_SIZE = 100 // Maximum messages to queue
+  private cleanupInterval: NodeJS.Timeout | null = null
+
   // Settings for automatic approvals
   private automaticCodeApproval: 'never' | 'low' | 'medium' | 'high' = 'never'
   private readonly CODE_APPROVAL_ORDER = ['never', 'low', 'medium', 'high'] as const
@@ -74,6 +87,7 @@ export class WebSocketServer {
 
   constructor() {
     this.initializeWebSocket()
+    this.startCleanupInterval()
   }
 
   private async initializeWebSocket(): Promise<void> {
@@ -202,7 +216,10 @@ export class WebSocketServer {
     })
 
     this.wsServer.on('connection', (ws: WebSocket) => {
-      
+      console.log('✅ New WebSocket client connected')
+
+      // Deliver any queued messages to the newly connected client
+      this.deliverQueuedMessages(ws)
 
       ws.on('message', async (data: WebSocket.Data) => {
         try {
@@ -399,22 +416,40 @@ export class WebSocketServer {
   // Public method to send a message to all connected clients
   broadcast(message: unknown): void {
     if (this.wsServer) {
+      let deliveredToAnyClient = false
+
       this.wsServer.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(message))
+          deliveredToAnyClient = true
         }
       })
+
+      // If no clients are connected, queue the message for future delivery
+      if (!deliveredToAnyClient) {
+        this.addToQueue(message)
+        console.log('📦 No clients connected, message queued for future delivery')
+      }
     }
   }
 
   // Send a message to all clients except the sender
   broadcastToOthers(message: unknown, sender: WebSocket): void {
     if (this.wsServer) {
+      let deliveredToAnyClient = false
+
       this.wsServer.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN && client !== sender) {
           client.send(JSON.stringify(message))
+          deliveredToAnyClient = true
         }
       })
+
+      // If no other clients are connected, queue the message for future delivery
+      if (!deliveredToAnyClient) {
+        this.addToQueue(message)
+        console.log('📦 No other clients connected, message queued for future delivery')
+      }
     }
   }
 
@@ -574,7 +609,7 @@ export class WebSocketServer {
   clearAllMessages(): void {
     this.messages = []
     this.pendingCount = 0
-    
+
 
     // Notify all clients
     this.broadcast({
@@ -583,11 +618,110 @@ export class WebSocketServer {
     })
   }
 
+  // Message queue management methods
+
+  /**
+   * Starts the periodic cleanup interval for expired messages
+   */
+  private startCleanupInterval(): void {
+    // Clean up expired messages every 30 seconds
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupExpiredMessages()
+    }, 30000)
+  }
+
+  /**
+   * Adds a message to the queue with TTL
+   */
+  private addToQueue(message: unknown): void {
+    const now = Date.now()
+    const queuedMessage: QueuedMessage = {
+      message,
+      timestamp: now,
+      expiresAt: now + this.MESSAGE_QUEUE_TTL,
+    }
+
+    this.messageQueue.push(queuedMessage)
+
+    // Enforce max queue size - remove oldest messages if over limit
+    if (this.messageQueue.length > this.MESSAGE_QUEUE_MAX_SIZE) {
+      const excess = this.messageQueue.length - this.MESSAGE_QUEUE_MAX_SIZE
+      this.messageQueue.splice(0, excess)
+      console.warn(`⚠️ Message queue exceeded max size (${this.MESSAGE_QUEUE_MAX_SIZE}), removed ${excess} oldest messages`)
+    }
+  }
+
+  /**
+   * Removes expired messages from the queue
+   */
+  private cleanupExpiredMessages(): void {
+    const now = Date.now()
+    const originalLength = this.messageQueue.length
+
+    this.messageQueue = this.messageQueue.filter(queuedMsg => queuedMsg.expiresAt > now)
+
+    const removed = originalLength - this.messageQueue.length
+    if (removed > 0) {
+      console.log(`🧹 Cleaned up ${removed} expired message(s) from queue`)
+    }
+  }
+
+  /**
+   * Delivers all queued messages to a newly connected client
+   * Clears the queue after delivery to prevent infinite loops
+   */
+  private deliverQueuedMessages(client: WebSocket): void {
+    // Clean up expired messages first
+    this.cleanupExpiredMessages()
+
+    if (this.messageQueue.length === 0) {
+      return
+    }
+
+    console.log(`📬 Delivering ${this.messageQueue.length} queued message(s) to new client`)
+
+    // Send all queued messages to the new client
+    this.messageQueue.forEach(queuedMsg => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(queuedMsg.message))
+      }
+    })
+
+    // Clear the queue after delivery to prevent messages from being
+    // delivered multiple times and to avoid infinite loops
+    this.messageQueue = []
+    console.log('🧹 Queue cleared after delivery')
+  }
+
+  /**
+   * Gets queue statistics for monitoring
+   */
+  getQueueStats(): { size: number, oldestAge: number | null, newestAge: number | null } {
+    const now = Date.now()
+    if (this.messageQueue.length === 0) {
+      return { size: 0, oldestAge: null, newestAge: null }
+    }
+
+    const oldestAge = now - this.messageQueue[0].timestamp
+    const newestAge = now - this.messageQueue[this.messageQueue.length - 1].timestamp
+
+    return {
+      size: this.messageQueue.length,
+      oldestAge,
+      newestAge,
+    }
+  }
+
   // Clean up resources
   cleanup(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval)
+      this.cleanupInterval = null
+    }
+
     if (this.wsServer) {
       this.wsServer.close()
-      
+
     }
   }
 }
