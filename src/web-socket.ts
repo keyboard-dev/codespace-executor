@@ -80,6 +80,11 @@ export class WebSocketServer {
   private readonly MESSAGE_QUEUE_MAX_SIZE = 100 // Maximum messages to queue
   private cleanupInterval: NodeJS.Timeout | null = null
 
+  // Ping/pong keep-alive to prevent idle connections
+  private readonly PING_INTERVAL = 30000 // 30 seconds
+  private connectionAliveStatus: Map<WebSocket, boolean> = new Map()
+  private pingIntervals: Map<WebSocket, NodeJS.Timeout> = new Map()
+
   // Settings for automatic approvals
   private automaticCodeApproval: 'never' | 'low' | 'medium' | 'high' = 'never'
   private readonly CODE_APPROVAL_ORDER = ['never', 'low', 'medium', 'high'] as const
@@ -217,6 +222,9 @@ export class WebSocketServer {
 
     this.wsServer.on('connection', (ws: WebSocket) => {
       console.log('✅ New WebSocket client connected')
+
+      // Set up ping/pong keep-alive for this connection
+      this.setupConnectionKeepalive(ws)
 
       // Deliver any queued messages to the newly connected client
       this.deliverQueuedMessages(ws)
@@ -404,11 +412,13 @@ export class WebSocketServer {
       })
 
       ws.on('close', () => {
-        
+        console.log('🔌 WebSocket client disconnected')
+        this.cleanupConnection(ws)
       })
 
       ws.on('error', (error) => {
         console.error('❌ WebSocket error:', error)
+        this.cleanupConnection(ws)
       })
     })
   }
@@ -712,6 +722,60 @@ export class WebSocketServer {
     }
   }
 
+  /**
+   * Sets up ping/pong keep-alive for a WebSocket connection
+   * Prevents connections from going idle by sending periodic pings
+   * and terminating unresponsive connections
+   */
+  private setupConnectionKeepalive(ws: WebSocket): void {
+    // Initialize connection as alive
+    this.connectionAliveStatus.set(ws, true)
+
+    // Handle pong responses from client
+    ws.on('pong', () => {
+      this.connectionAliveStatus.set(ws, true)
+    })
+
+    // Send periodic pings and check if client is responsive
+    const pingInterval = setInterval(() => {
+      const isAlive = this.connectionAliveStatus.get(ws)
+
+      if (isAlive === false) {
+        // Client didn't respond to last ping - terminate connection
+        console.log('⚠️ Client failed to respond to ping, terminating connection')
+        ws.terminate()
+        this.cleanupConnection(ws)
+        return
+      }
+
+      // Mark as not alive - will be set to true if pong is received
+      this.connectionAliveStatus.set(ws, false)
+
+      // Send ping if connection is open
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping()
+      }
+    }, this.PING_INTERVAL)
+
+    // Store interval for cleanup
+    this.pingIntervals.set(ws, pingInterval)
+  }
+
+  /**
+   * Cleans up resources associated with a connection
+   */
+  private cleanupConnection(ws: WebSocket): void {
+    // Clear ping interval
+    const pingInterval = this.pingIntervals.get(ws)
+    if (pingInterval) {
+      clearInterval(pingInterval)
+      this.pingIntervals.delete(ws)
+    }
+
+    // Remove connection status
+    this.connectionAliveStatus.delete(ws)
+  }
+
   // Clean up resources
   cleanup(): void {
     if (this.cleanupInterval) {
@@ -719,9 +783,15 @@ export class WebSocketServer {
       this.cleanupInterval = null
     }
 
+    // Clean up all ping intervals
+    this.pingIntervals.forEach((interval) => {
+      clearInterval(interval)
+    })
+    this.pingIntervals.clear()
+    this.connectionAliveStatus.clear()
+
     if (this.wsServer) {
       this.wsServer.close()
-
     }
   }
 }
