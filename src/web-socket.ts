@@ -55,6 +55,13 @@ interface Message {
   }
 }
 
+// Types for queued messages
+interface QueuedMessage {
+  message: unknown
+  timestamp: number
+  expiresAt: number
+}
+
 export class WebSocketServer {
   private wsServer: WebSocket.Server | null = null
   private readonly WS_PORT = 4002
@@ -66,7 +73,18 @@ export class WebSocketServer {
   // Message storage
   private messages: Message[] = []
   private pendingCount: number = 0
-  
+
+  // Message queue for offline clients
+  private messageQueue: QueuedMessage[] = []
+  private readonly MESSAGE_QUEUE_TTL = 2 * 60 * 1000 // 2 minutes in milliseconds
+  private readonly MESSAGE_QUEUE_MAX_SIZE = 100 // Maximum messages to queue
+  private cleanupInterval: NodeJS.Timeout | null = null
+
+  // Ping/pong keep-alive to prevent idle connections
+  private readonly PING_INTERVAL = 30000 // 30 seconds
+  private connectionAliveStatus: Map<WebSocket, boolean> = new Map()
+  private pingIntervals: Map<WebSocket, NodeJS.Timeout> = new Map()
+
   // Settings for automatic approvals
   private automaticCodeApproval: 'never' | 'low' | 'medium' | 'high' = 'never'
   private readonly CODE_APPROVAL_ORDER = ['never', 'low', 'medium', 'high'] as const
@@ -74,6 +92,7 @@ export class WebSocketServer {
 
   constructor() {
     this.initializeWebSocket()
+    this.startCleanupInterval()
   }
 
   private async initializeWebSocket(): Promise<void> {
@@ -202,7 +221,13 @@ export class WebSocketServer {
     })
 
     this.wsServer.on('connection', (ws: WebSocket) => {
-      
+      console.log('✅ New WebSocket client connected')
+
+      // Set up ping/pong keep-alive for this connection
+      this.setupConnectionKeepalive(ws)
+
+      // Deliver any queued messages to the newly connected client
+      this.deliverQueuedMessages(ws)
 
       ws.on('message', async (data: WebSocket.Data) => {
         try {
@@ -387,11 +412,13 @@ export class WebSocketServer {
       })
 
       ws.on('close', () => {
-        
+        console.log('🔌 WebSocket client disconnected')
+        this.cleanupConnection(ws)
       })
 
       ws.on('error', (error) => {
         console.error('❌ WebSocket error:', error)
+        this.cleanupConnection(ws)
       })
     })
   }
@@ -399,22 +426,40 @@ export class WebSocketServer {
   // Public method to send a message to all connected clients
   broadcast(message: unknown): void {
     if (this.wsServer) {
+      let deliveredToAnyClient = false
+
       this.wsServer.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(message))
+          deliveredToAnyClient = true
         }
       })
+
+      // If no clients are connected, queue the message for future delivery
+      if (!deliveredToAnyClient) {
+        this.addToQueue(message)
+        console.log('📦 No clients connected, message queued for future delivery')
+      }
     }
   }
 
   // Send a message to all clients except the sender
   broadcastToOthers(message: unknown, sender: WebSocket): void {
     if (this.wsServer) {
+      let deliveredToAnyClient = false
+
       this.wsServer.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN && client !== sender) {
           client.send(JSON.stringify(message))
+          deliveredToAnyClient = true
         }
       })
+
+      // If no other clients are connected, queue the message for future delivery
+      if (!deliveredToAnyClient) {
+        this.addToQueue(message)
+        console.log('📦 No other clients connected, message queued for future delivery')
+      }
     }
   }
 
@@ -574,7 +619,7 @@ export class WebSocketServer {
   clearAllMessages(): void {
     this.messages = []
     this.pendingCount = 0
-    
+
 
     // Notify all clients
     this.broadcast({
@@ -583,11 +628,170 @@ export class WebSocketServer {
     })
   }
 
+  // Message queue management methods
+
+  /**
+   * Starts the periodic cleanup interval for expired messages
+   */
+  private startCleanupInterval(): void {
+    // Clean up expired messages every 30 seconds
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupExpiredMessages()
+    }, 30000)
+  }
+
+  /**
+   * Adds a message to the queue with TTL
+   */
+  private addToQueue(message: unknown): void {
+    const now = Date.now()
+    const queuedMessage: QueuedMessage = {
+      message,
+      timestamp: now,
+      expiresAt: now + this.MESSAGE_QUEUE_TTL,
+    }
+
+    this.messageQueue.push(queuedMessage)
+
+    // Enforce max queue size - remove oldest messages if over limit
+    if (this.messageQueue.length > this.MESSAGE_QUEUE_MAX_SIZE) {
+      const excess = this.messageQueue.length - this.MESSAGE_QUEUE_MAX_SIZE
+      this.messageQueue.splice(0, excess)
+      console.warn(`⚠️ Message queue exceeded max size (${this.MESSAGE_QUEUE_MAX_SIZE}), removed ${excess} oldest messages`)
+    }
+  }
+
+  /**
+   * Removes expired messages from the queue
+   */
+  private cleanupExpiredMessages(): void {
+    const now = Date.now()
+    const originalLength = this.messageQueue.length
+
+    this.messageQueue = this.messageQueue.filter(queuedMsg => queuedMsg.expiresAt > now)
+
+    const removed = originalLength - this.messageQueue.length
+    if (removed > 0) {
+      console.log(`🧹 Cleaned up ${removed} expired message(s) from queue`)
+    }
+  }
+
+  /**
+   * Delivers all queued messages to a newly connected client
+   * Clears the queue after delivery to prevent infinite loops
+   */
+  private deliverQueuedMessages(client: WebSocket): void {
+    // Clean up expired messages first
+    this.cleanupExpiredMessages()
+
+    if (this.messageQueue.length === 0) {
+      return
+    }
+
+    console.log(`📬 Delivering ${this.messageQueue.length} queued message(s) to new client`)
+
+    // Send all queued messages to the new client
+    this.messageQueue.forEach(queuedMsg => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(queuedMsg.message))
+      }
+    })
+
+    // Clear the queue after delivery to prevent messages from being
+    // delivered multiple times and to avoid infinite loops
+    this.messageQueue = []
+    console.log('🧹 Queue cleared after delivery')
+  }
+
+  /**
+   * Gets queue statistics for monitoring
+   */
+  getQueueStats(): { size: number, oldestAge: number | null, newestAge: number | null } {
+    const now = Date.now()
+    if (this.messageQueue.length === 0) {
+      return { size: 0, oldestAge: null, newestAge: null }
+    }
+
+    const oldestAge = now - this.messageQueue[0].timestamp
+    const newestAge = now - this.messageQueue[this.messageQueue.length - 1].timestamp
+
+    return {
+      size: this.messageQueue.length,
+      oldestAge,
+      newestAge,
+    }
+  }
+
+  /**
+   * Sets up ping/pong keep-alive for a WebSocket connection
+   * Prevents connections from going idle by sending periodic pings
+   * and terminating unresponsive connections
+   */
+  private setupConnectionKeepalive(ws: WebSocket): void {
+    // Initialize connection as alive
+    this.connectionAliveStatus.set(ws, true)
+
+    // Handle pong responses from client
+    ws.on('pong', () => {
+      this.connectionAliveStatus.set(ws, true)
+    })
+
+    // Send periodic pings and check if client is responsive
+    const pingInterval = setInterval(() => {
+      const isAlive = this.connectionAliveStatus.get(ws)
+
+      if (isAlive === false) {
+        // Client didn't respond to last ping - terminate connection
+        console.log('⚠️ Client failed to respond to ping, terminating connection')
+        ws.terminate()
+        this.cleanupConnection(ws)
+        return
+      }
+
+      // Mark as not alive - will be set to true if pong is received
+      this.connectionAliveStatus.set(ws, false)
+
+      // Send ping if connection is open
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping()
+      }
+    }, this.PING_INTERVAL)
+
+    // Store interval for cleanup
+    this.pingIntervals.set(ws, pingInterval)
+  }
+
+  /**
+   * Cleans up resources associated with a connection
+   */
+  private cleanupConnection(ws: WebSocket): void {
+    // Clear ping interval
+    const pingInterval = this.pingIntervals.get(ws)
+    if (pingInterval) {
+      clearInterval(pingInterval)
+      this.pingIntervals.delete(ws)
+    }
+
+    // Remove connection status
+    this.connectionAliveStatus.delete(ws)
+  }
+
   // Clean up resources
   cleanup(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval)
+      this.cleanupInterval = null
+    }
+
+    // Clean up all ping intervals
+    this.pingIntervals.forEach((interval) => {
+      clearInterval(interval)
+    })
+    this.pingIntervals.clear()
+    this.connectionAliveStatus.clear()
+
     if (this.wsServer) {
       this.wsServer.close()
-      
     }
   }
 }
