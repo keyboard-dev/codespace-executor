@@ -4,7 +4,7 @@
   "description": "A typescript server that allows keyboard to execute code'.",
   "main": "src/server.ts",
   "scripts": {
-    "start": "npm install && npm run build && node dist/src/server.js",
+    "start": "node dist/src/server.js",
     "dev": "npm install && npm run build && node dist/src/server.js",
     "dev:watch": "npm install && concurrently \"npm run build:watch\" \"nodemon dist/src/server.js\"",
     "build": "tsc",
